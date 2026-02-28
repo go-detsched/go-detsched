@@ -22,4 +22,4 @@ jobs:
       - name: Verify patch applies and demos pass
         run: |
           chmod +x scripts/*.sh
-          ./scripts/build-go-detsched.sh --go-tag go1.26.0 --no-install
+          ./scripts/build.sh --go-tag go1.26.0 --no-install

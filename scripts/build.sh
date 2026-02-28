@@ -10,13 +10,13 @@ INSTALL=1
 
 usage() {
   cat <<'EOF'
-Usage: build-go-detsched.sh [options]
+Usage: build.sh [options]
 
 Options:
   --go-tag <tag>       Upstream Go tag (default: go1.26.0)
   --prefix <path>      Install prefix for patched GOROOT
   --workdir <path>     Build workspace (default: mktemp dir)
-  --patch <path>       Patch file (default: repo-root/detsched-only-feature.git.patch)
+  --patch <path>       Patch file (default: repo-root/detsched.git.patch)
   --no-verify          Skip demo verification run
   --no-install         Build+verify but do not install to prefix
   -h, --help           Show help
@@ -38,7 +38,7 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PATCH_FILE="${PATCH_FILE:-${REPO_ROOT}/detsched-only-feature.git.patch}"
+PATCH_FILE="${PATCH_FILE:-${REPO_ROOT}/detsched.git.patch}"
 
 if [[ ! -f "$PATCH_FILE" ]]; then
   echo "patch file not found: $PATCH_FILE" >&2
