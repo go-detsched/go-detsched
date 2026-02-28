@@ -1,0 +1,1462 @@
+diff --git a/misc/detscheddemo/gc_demo.go b/misc/detscheddemo/gc_demo.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..f96e447a90882e66c027d47df776c0e139257dfa
+--- /dev/null
++++ b/misc/detscheddemo/gc_demo.go
+@@ -0,0 +1,68 @@
++package main
++
++import (
++	"flag"
++	"fmt"
++	"runtime"
++	"sync"
++)
++
++func main() {
++	workers := flag.Int("workers", 32, "number of workers")
++	rounds := flag.Int("rounds", 4000, "allocation rounds per worker")
++	procs := flag.Int("procs", 1, "GOMAXPROCS")
++	flag.Parse()
++
++	runtime.GOMAXPROCS(*procs)
++	h := runGCWorkload(*workers, *rounds)
++	fmt.Printf("%016x\n", h)
++}
++
++func runGCWorkload(workers, rounds int) uint64 {
++	type result struct {
++		id  int
++		acc uint64
++	}
++	out := make(chan result, workers)
++	var wg sync.WaitGroup
++	wg.Add(workers)
++	for w := 0; w < workers; w++ {
++		id := uint64(w + 1)
++		go func() {
++			defer wg.Done()
++			acc := uint64(0x6a09e667f3bcc909 ^ id)
++			for i := 0; i < rounds; i++ {
++				n := int((id+uint64(i))%128 + 256)
++				buf := make([]byte, n)
++				for j := range buf {
++					buf[j] = byte((int(id) + i + j) & 0xff)
++				}
++				for _, b := range buf {
++					acc ^= uint64(b) + 0x9e3779b97f4a7c15
++					acc = (acc << 7) | (acc >> 57)
++					acc *= 0xbf58476d1ce4e5b9
++				}
++				if i&255 == 0 {
++					runtime.GC()
++				}
++			}
++			out <- result{id: int(id), acc: acc}
++		}()
++	}
++	go func() {
++		wg.Wait()
++		close(out)
++	}()
++
++	results := make([]uint64, workers+1)
++	for r := range out {
++		results[r.id] = r.acc
++	}
++
++	hash := uint64(0xcbf29ce484222325)
++	for i := 1; i <= workers; i++ {
++		hash ^= results[i]
++		hash *= 0x100000001b3
++	}
++	return hash
++}
+diff --git a/misc/detscheddemo/main.go b/misc/detscheddemo/main.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..b8f65f173af767c1efd768e44b982d38232c1302
+--- /dev/null
++++ b/misc/detscheddemo/main.go
+@@ -0,0 +1,92 @@
++package main
++
++import (
++	"flag"
++	"fmt"
++	"runtime"
++	"sync"
++)
++
++type item struct {
++	worker uint64
++	iter   uint64
++	value  uint64
++}
++
++func main() {
++	workers := flag.Int("workers", 128, "number of workers")
++	iters := flag.Int("iters", 20000, "iterations per worker")
++	procs := flag.Int("procs", 1, "GOMAXPROCS")
++	flag.Parse()
++
++	runtime.GOMAXPROCS(*procs)
++	h := runWorkload(*workers, *iters)
++	fmt.Printf("%016x\n", h)
++}
++
++func runWorkload(workers, iters int) uint64 {
++	out := make(chan item)
++	var wg sync.WaitGroup
++	wg.Add(workers)
++	for w := 0; w < workers; w++ {
++		workerID := uint64(w + 1)
++		go func() {
++			defer wg.Done()
++			state := splitmix64(workerID*0x9e3779b97f4a7c15 + 0x243f6a8885a308d3)
++			acc := uint64(0x6a09e667f3bcc909 ^ workerID)
++			for i := 0; i < iters; i++ {
++				a := next(&state)
++				b := next(&state)
++				v := arithmetic(a, b, workerID, uint64(i))
++				acc ^= rotl(v+uint64(i), int((workerID+uint64(i))%63+1))
++				acc *= 0x9e3779b97f4a7c15
++			}
++			out <- item{worker: workerID, iter: uint64(iters), value: acc}
++		}()
++	}
++	go func() {
++		wg.Wait()
++		close(out)
++	}()
++	hash := uint64(0xcbf29ce484222325)
++	for it := range out {
++		hash ^= mixItem(it)
++		hash *= 0x100000001b3
++		hash = rotl(hash, 13)
++	}
++	return hash
++}
++
++func arithmetic(a, b, workerID, iter uint64) uint64 {
++	x := a*0x9e3779b97f4a7c15 + b
++	x ^= rotl(workerID+iter+1, int((workerID+iter)%63+1))
++	x = (x ^ (x >> 29)) * 0xbf58476d1ce4e5b9
++	x ^= x >> 32
++	return x
++}
++
++func mixItem(it item) uint64 {
++	x := it.value ^ (it.worker * 0x94d049bb133111eb) ^ (it.iter * 0x2545f4914f6cdd1d)
++	x ^= x >> 30
++	x *= 0xbf58476d1ce4e5b9
++	x ^= x >> 27
++	x *= 0x94d049bb133111eb
++	x ^= x >> 31
++	return x
++}
++
++func splitmix64(seed uint64) uint64 {
++	return seed
++}
++
++func next(s *uint64) uint64 {
++	*s += 0x9e3779b97f4a7c15
++	z := *s
++	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
++	z = (z ^ (z >> 27)) * 0x94d049bb133111eb
++	return z ^ (z >> 31)
++}
++
++func rotl(x uint64, k int) uint64 {
++	return (x << k) | (x >> (64 - k))
++}
+diff --git a/misc/detscheddemo/map_demo.go b/misc/detscheddemo/map_demo.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..6389526113faa4b67e3d5f2d9338f6a495277625
+--- /dev/null
++++ b/misc/detscheddemo/map_demo.go
+@@ -0,0 +1,57 @@
++package main
++
++import (
++	"flag"
++	"fmt"
++	"runtime"
++)
++
++func main() {
++	entries := flag.Int("entries", 50000, "number of map entries")
++	repeats := flag.Int("repeats", 5, "number of full map iterations")
++	procs := flag.Int("procs", 1, "GOMAXPROCS")
++	flag.Parse()
++
++	runtime.GOMAXPROCS(*procs)
++
++	h := runMapIterHash(*entries, *repeats)
++	fmt.Printf("%016x\n", h)
++}
++
++func runMapIterHash(entries, repeats int) uint64 {
++	m := make(map[uint64]uint64, entries)
++	for i := 0; i < entries; i++ {
++		k := splitmix64(uint64(i + 1))
++		v := splitmix64(k ^ 0x9e3779b97f4a7c15)
++		m[k] = v
++	}
++
++	h := uint64(0xcbf29ce484222325)
++	for r := 0; r < repeats; r++ {
++		for k, v := range m {
++			x := k ^ rotl(v, int((k%63)+1)) ^ uint64(r+1)
++			x ^= x >> 30
++			x *= 0xbf58476d1ce4e5b9
++			x ^= x >> 27
++			x *= 0x94d049bb133111eb
++			x ^= x >> 31
++			h ^= x
++			h *= 0x100000001b3
++		}
++	}
++	return h
++}
++
++func splitmix64(x uint64) uint64 {
++	x += 0x9e3779b97f4a7c15
++	x ^= x >> 30
++	x *= 0xbf58476d1ce4e5b9
++	x ^= x >> 27
++	x *= 0x94d049bb133111eb
++	x ^= x >> 31
++	return x
++}
++
++func rotl(x uint64, k int) uint64 {
++	return (x << k) | (x >> (64 - k))
++}
+diff --git a/misc/detscheddemo/run_all_demos.sh b/misc/detscheddemo/run_all_demos.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..a701b7b1ba65774ecffd8b9be6638d6e8e1e113c
+--- /dev/null
++++ b/misc/detscheddemo/run_all_demos.sh
+@@ -0,0 +1,14 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++
++"$ROOT/run_seed_demo.sh" 12345 99999
++"$ROOT/run_select_demo.sh" 1 2
++"$ROOT/run_map_demo.sh" 1 2
++"$ROOT/run_gc_demo.sh" 1 2
++"$ROOT/run_timer_demo.sh" 1 2
++"$ROOT/run_stress_demo.sh" 12345 99999 256 3000
++"$ROOT/run_synctest_demo.sh" 12345 99999
++
++echo "All deterministic demos passed."
+diff --git a/misc/detscheddemo/run_gc_demo.sh b/misc/detscheddemo/run_gc_demo.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..62ebfc7e72d7ec62b51ed9e7ba10172e2ba522c2
+--- /dev/null
++++ b/misc/detscheddemo/run_gc_demo.sh
+@@ -0,0 +1,39 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++GO="$ROOT/bin/go"
++DEMO="$ROOT/misc/detscheddemo/gc_demo.go"
++
++seed="${1:-1}"
++other_seed="${2:-2}"
++
++run_once() {
++  local s="$1"
++  GODEBUG="detsched=1,detschedseed=${s}" "$GO" run "$DEMO" -workers=32 -rounds=4000 -procs=1
++}
++
++echo "Running GC demo with seed=$seed (run 1)..."
++h1="$(run_once "$seed")"
++echo "hash=$h1"
++
++echo "Running GC demo with seed=$seed (run 2)..."
++h2="$(run_once "$seed")"
++echo "hash=$h2"
++
++if [[ "$h1" != "$h2" ]]; then
++  echo "FAIL: same seed produced different GC demo hashes" >&2
++  exit 1
++fi
++
++echo "Running GC demo with seed=$other_seed..."
++h3="$(run_once "$other_seed")"
++echo "hash=$h3"
++
++if [[ "$h1" == "$h3" ]]; then
++  echo "WARNING: different seed matched hash (possible but unlikely)"
++else
++  echo "Different seed produced a different GC demo hash as expected."
++fi
++
++echo "GC determinism demo passed."
+diff --git a/misc/detscheddemo/run_map_demo.sh b/misc/detscheddemo/run_map_demo.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..b0e2a0dc66858ff63b6de29d6baf315b6b58ce51
+--- /dev/null
++++ b/misc/detscheddemo/run_map_demo.sh
+@@ -0,0 +1,39 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++GO="$ROOT/bin/go"
++DEMO="$ROOT/misc/detscheddemo/map_demo.go"
++
++seed="${1:-1}"
++other_seed="${2:-2}"
++
++run_once() {
++  local s="$1"
++  GODEBUG="detsched=1,detschedseed=${s}" "$GO" run "$DEMO" -entries=50000 -repeats=5 -procs=1
++}
++
++echo "Running map demo with seed=$seed (run 1)..."
++h1="$(run_once "$seed")"
++echo "hash=$h1"
++
++echo "Running map demo with seed=$seed (run 2)..."
++h2="$(run_once "$seed")"
++echo "hash=$h2"
++
++if [[ "$h1" != "$h2" ]]; then
++  echo "FAIL: same seed produced different map iteration hashes" >&2
++  exit 1
++fi
++
++echo "Running map demo with seed=$other_seed..."
++h3="$(run_once "$other_seed")"
++echo "hash=$h3"
++
++if [[ "$h1" == "$h3" ]]; then
++  echo "WARNING: different seed matched hash (possible but unlikely)"
++else
++  echo "Different seed produced a different map iteration hash as expected."
++fi
++
++echo "Map iteration determinism demo passed."
+diff --git a/misc/detscheddemo/run_seed_demo.sh b/misc/detscheddemo/run_seed_demo.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..a6dc00b6d8f1aebda55d1e33f6aba6ba9d6c7006
+--- /dev/null
++++ b/misc/detscheddemo/run_seed_demo.sh
+@@ -0,0 +1,39 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++GO="$ROOT/bin/go"
++DEMO="$ROOT/misc/detscheddemo/main.go"
++
++seed="${1:-12345}"
++other_seed="${2:-54321}"
++
++run_with_seed() {
++  local s="$1"
++  GODEBUG="detsched=1,detschedseed=${s}" "$GO" run "$DEMO" -workers=128 -iters=20000 -procs=1
++}
++
++echo "Run A with seed=$seed"
++h1="$(run_with_seed "$seed")"
++echo "hash=$h1"
++
++echo "Run B with same seed=$seed"
++h2="$(run_with_seed "$seed")"
++echo "hash=$h2"
++
++if [[ "$h1" != "$h2" ]]; then
++  echo "FAIL: same seed produced different hashes" >&2
++  exit 1
++fi
++
++echo "Run C with different seed=$other_seed"
++h3="$(run_with_seed "$other_seed")"
++echo "hash=$h3"
++
++if [[ "$h1" == "$h3" ]]; then
++  echo "WARNING: different seed matched hash (possible but unlikely)"
++else
++  echo "Different seed produced a different hash as expected."
++fi
++
++echo "Deterministic scheduler seed demo passed."
+diff --git a/misc/detscheddemo/run_select_demo.sh b/misc/detscheddemo/run_select_demo.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..a7eb7b53abadb607eb62e3b91ee29745f3de4c3f
+--- /dev/null
++++ b/misc/detscheddemo/run_select_demo.sh
+@@ -0,0 +1,39 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++GO="$ROOT/bin/go"
++DEMO="$ROOT/misc/detscheddemo/select_demo.go"
++
++seed="${1:-1}"
++other_seed="${2:-2}"
++
++run_once() {
++  local s="$1"
++  GODEBUG="detsched=1,detschedseed=${s}" "$GO" run "$DEMO" -iters=200000 -procs=1
++}
++
++echo "Running select demo with seed=$seed (run 1)..."
++h1="$(run_once "$seed")"
++echo "hash=$h1"
++
++echo "Running select demo with seed=$seed (run 2)..."
++h2="$(run_once "$seed")"
++echo "hash=$h2"
++
++if [[ "$h1" != "$h2" ]]; then
++  echo "FAIL: same seed produced different select hashes" >&2
++  exit 1
++fi
++
++echo "Running select demo with seed=$other_seed..."
++h3="$(run_once "$other_seed")"
++echo "hash=$h3"
++
++if [[ "$h1" == "$h3" ]]; then
++  echo "WARNING: different seed matched hash (possible but unlikely)"
++else
++  echo "Different seed produced a different select hash as expected."
++fi
++
++echo "Select multi-ready determinism demo passed."
+diff --git a/misc/detscheddemo/run_stress_demo.sh b/misc/detscheddemo/run_stress_demo.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..34b51147c6946d2f98cc5b1367f30f2aadf3f4a3
+--- /dev/null
++++ b/misc/detscheddemo/run_stress_demo.sh
+@@ -0,0 +1,59 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++GO="$ROOT/bin/go"
++DEMO="$ROOT/misc/detscheddemo/stress_demo.go"
++
++seed="${1:-12345}"
++other_seed="${2:-54321}"
++workers="${3:-256}"
++iters="${4:-3000}"
++
++run_once() {
++  local s="$1"
++  GODEBUG="detsched=1,detschedseed=${s}" "$GO" run "$DEMO" -workers="$workers" -iters="$iters" -procs=1
++}
++
++extract_hash() {
++  sed -n 's/.*hash=\([0-9a-f]\{16\}\).*/\1/p'
++}
++
++extract_switches() {
++  sed -n 's/.*switches=\([0-9]\+\).*/\1/p'
++}
++
++echo "Running stress demo with seed=$seed (run 1)..."
++o1="$(run_once "$seed")"
++h1="$(printf '%s\n' "$o1" | extract_hash)"
++s1="$(printf '%s\n' "$o1" | extract_switches)"
++echo "$o1"
++
++echo "Running stress demo with seed=$seed (run 2)..."
++o2="$(run_once "$seed")"
++h2="$(printf '%s\n' "$o2" | extract_hash)"
++s2="$(printf '%s\n' "$o2" | extract_switches)"
++echo "$o2"
++
++if [[ "$h1" != "$h2" ]]; then
++  echo "FAIL: same seed produced different stress hashes" >&2
++  exit 1
++fi
++
++if [[ "$s1" -lt 200000 || "$s2" -lt 200000 ]]; then
++  echo "FAIL: stress run did not hit enough context switches" >&2
++  exit 1
++fi
++
++echo "Running stress demo with seed=$other_seed..."
++o3="$(run_once "$other_seed")"
++h3="$(printf '%s\n' "$o3" | extract_hash)"
++echo "$o3"
++
++if [[ "$h1" == "$h3" ]]; then
++  echo "WARNING: different seed matched stress hash (possible but unlikely)"
++else
++  echo "Different seed produced a different stress hash as expected."
++fi
++
++echo "Combined stress determinism demo passed."
+diff --git a/misc/detscheddemo/run_synctest_demo.sh b/misc/detscheddemo/run_synctest_demo.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..24ce713cd4093bfbcd28b344e433c24cb987942d
+--- /dev/null
++++ b/misc/detscheddemo/run_synctest_demo.sh
+@@ -0,0 +1,40 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++GO="$ROOT/bin/go"
++TEST_NAME='TestDetSchedSeededBubbleHash'
++
++seed="${1:-12345}"
++other_seed="${2:-99999}"
++
++run_once() {
++  local s="$1"
++  GODEBUG="detsched=1,detschedseed=${s}" "$GO" test testing/synctest -run "^${TEST_NAME}$" -count=1 -v \
++    | sed -n 's/.*detsched-hash=\([0-9a-f]\{16\}\).*/\1/p'
++}
++
++echo "Running synctest demo with seed=$seed (run 1)..."
++h1="$(run_once "$seed")"
++echo "hash=$h1"
++
++echo "Running synctest demo with seed=$seed (run 2)..."
++h2="$(run_once "$seed")"
++echo "hash=$h2"
++
++if [[ "$h1" != "$h2" ]]; then
++  echo "FAIL: same seed produced different synctest hashes" >&2
++  exit 1
++fi
++
++echo "Running synctest demo with seed=$other_seed..."
++h3="$(run_once "$other_seed")"
++echo "hash=$h3"
++
++if [[ "$h1" == "$h3" ]]; then
++  echo "WARNING: different seed matched hash (possible but unlikely)"
++else
++  echo "Different seed produced a different synctest hash as expected."
++fi
++
++echo "Synctest + deterministic scheduler demo passed."
+diff --git a/misc/detscheddemo/run_timer_demo.sh b/misc/detscheddemo/run_timer_demo.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..36e7bcf723329596ce038fd3da5c93b133705414
+--- /dev/null
++++ b/misc/detscheddemo/run_timer_demo.sh
+@@ -0,0 +1,39 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++GO="$ROOT/bin/go"
++DEMO="$ROOT/misc/detscheddemo/timer_demo.go"
++
++seed="${1:-1}"
++other_seed="${2:-2}"
++
++run_once() {
++  local s="$1"
++  GODEBUG="detsched=1,detschedseed=${s}" "$GO" run "$DEMO" -workers=64 -rounds=2000 -procs=1
++}
++
++echo "Running timer demo with seed=$seed (run 1)..."
++h1="$(run_once "$seed")"
++echo "hash=$h1"
++
++echo "Running timer demo with seed=$seed (run 2)..."
++h2="$(run_once "$seed")"
++echo "hash=$h2"
++
++if [[ "$h1" != "$h2" ]]; then
++  echo "FAIL: same seed produced different timer demo hashes" >&2
++  exit 1
++fi
++
++echo "Running timer demo with seed=$other_seed..."
++h3="$(run_once "$other_seed")"
++echo "hash=$h3"
++
++if [[ "$h1" == "$h3" ]]; then
++  echo "WARNING: different seed matched hash (possible but unlikely)"
++else
++  echo "Different seed produced a different timer demo hash as expected."
++fi
++
++echo "Timer determinism demo passed."
+diff --git a/misc/detscheddemo/select_demo.go b/misc/detscheddemo/select_demo.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..0888bb90a2f1dae421118cd9d2588b27cdf26285
+--- /dev/null
++++ b/misc/detscheddemo/select_demo.go
+@@ -0,0 +1,84 @@
++package main
++
++import (
++	"flag"
++	"fmt"
++	"runtime"
++)
++
++func main() {
++	iters := flag.Int("iters", 200000, "number of select iterations")
++	procs := flag.Int("procs", 1, "GOMAXPROCS")
++	flag.Parse()
++
++	runtime.GOMAXPROCS(*procs)
++
++	h := runSelectHash(*iters)
++	fmt.Printf("%016x\n", h)
++}
++
++func runSelectHash(iters int) uint64 {
++	c1 := make(chan int, 1)
++	c2 := make(chan int, 1)
++	c3 := make(chan int, 1)
++	c4 := make(chan int, 1)
++	c5 := make(chan int, 1)
++
++	var h uint64 = 0xcbf29ce484222325
++	for i := 0; i < iters; i++ {
++		// Make all branches ready at the same time.
++		c1 <- i
++		c2 <- i ^ 0x55
++		c3 <- i ^ 0xaa
++		c4 <- i ^ 0x33
++		c5 <- i ^ 0xcc
++
++		var branch uint64
++		var v int
++		select {
++		case v = <-c1:
++			branch = 1
++		case v = <-c2:
++			branch = 2
++		case v = <-c3:
++			branch = 3
++		case v = <-c4:
++			branch = 4
++		case v = <-c5:
++			branch = 5
++		}
++
++		// Drain the remaining ready channels for next iteration.
++		select {
++		case <-c1:
++		default:
++		}
++		select {
++		case <-c2:
++		default:
++		}
++		select {
++		case <-c3:
++		default:
++		}
++		select {
++		case <-c4:
++		default:
++		}
++		select {
++		case <-c5:
++		default:
++		}
++
++		// Hash branch + value sequence.
++		x := (uint64(v) * 0x517cc1b727220a95) ^ (branch * 0x9e3779b97f4a7c15) ^ (uint64(i) * 0x94d049bb133111eb)
++		x ^= x >> 30
++		x *= 0xbf58476d1ce4e5b9
++		x ^= x >> 27
++		x *= 0x94d049bb133111eb
++		x ^= x >> 31
++		h ^= x
++		h *= 0x100000001b3
++	}
++	return h
++}
+diff --git a/misc/detscheddemo/stress_demo.go b/misc/detscheddemo/stress_demo.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..713cfd0c8e6b86f9f32da7021c613322128895bb
+--- /dev/null
++++ b/misc/detscheddemo/stress_demo.go
+@@ -0,0 +1,129 @@
++package main
++
++import (
++	"flag"
++	"fmt"
++	"runtime"
++	"sync"
++	"sync/atomic"
++	"time"
++)
++
++func main() {
++	workers := flag.Int("workers", 256, "number of worker goroutines")
++	iters := flag.Int("iters", 3000, "iterations per worker")
++	procs := flag.Int("procs", 1, "GOMAXPROCS")
++	flag.Parse()
++
++	runtime.GOMAXPROCS(*procs)
++	hash, switches := runStress(*workers, *iters)
++	fmt.Printf("hash=%016x switches=%d workers=%d iters=%d\n", hash, switches, *workers, *iters)
++}
++
++func runStress(workers, iters int) (uint64, uint64) {
++	results := make([]uint64, workers)
++	var switches atomic.Uint64
++	start := make(chan struct{})
++	var wg sync.WaitGroup
++	wg.Add(workers)
++
++	for w := 0; w < workers; w++ {
++		id := w
++		go func() {
++			defer wg.Done()
++			<-start
++
++			workerID := uint64(id + 1)
++			state := splitmix64(workerID*0x9e3779b97f4a7c15 + 0x243f6a8885a308d3)
++			local := make(map[uint64]uint64, 64)
++			aCh := make(chan uint64, 1)
++			bCh := make(chan uint64, 1)
++			h := uint64(0x6a09e667f3bcc909 ^ workerID)
++
++			for i := 0; i < iters; i++ {
++				iter := uint64(i)
++				a := next(&state)
++				b := next(&state)
++
++				k := (a ^ iter) & 63
++				local[k] = b ^ (workerID << 7) ^ iter
++
++				aCh <- a
++				bCh <- b
++				select {
++				case v := <-aCh:
++					<-bCh
++					h ^= mix64(v ^ 0xa5a5a5a5a5a5a5a5)
++				case v := <-bCh:
++					<-aCh
++					h ^= mix64(v ^ 0x5a5a5a5a5a5a5a5a)
++				}
++
++				if i%8 == 0 {
++					fold := uint64(0)
++					for lk, lv := range local {
++						fold ^= mix64(lk*0x9e3779b97f4a7c15 + lv)
++					}
++					h ^= rotl(fold, int((iter+workerID)%63+1))
++				}
++
++				if i%64 == 0 {
++					// Exercise timer-channel paths while avoiding wall-clock jitter.
++					<-time.After(0)
++					h ^= ((a % 3) + 1) << 11
++				}
++
++				if id == 0 && i%512 == 0 {
++					runtime.GC()
++				}
++
++				buf := make([]byte, 64+int(a&63))
++				buf[0] = byte(h)
++				buf[len(buf)-1] = byte(b)
++				h ^= uint64(buf[0]) ^ uint64(buf[len(buf)-1])<<8
++
++				runtime.Gosched()
++				switches.Add(1)
++				if (a^b)&1 == 0 {
++					runtime.Gosched()
++					switches.Add(1)
++				}
++			}
++
++			results[id] = h
++		}()
++	}
++
++	close(start)
++	wg.Wait()
++
++	final := uint64(0xcbf29ce484222325)
++	for i, r := range results {
++		final ^= mix64(r ^ uint64(i+1)*0x94d049bb133111eb)
++		final *= 0x100000001b3
++		final = rotl(final, 13)
++	}
++	return final, switches.Load()
++}
++
++func mix64(x uint64) uint64 {
++	x ^= x >> 30
++	x *= 0xbf58476d1ce4e5b9
++	x ^= x >> 27
++	x *= 0x94d049bb133111eb
++	x ^= x >> 31
++	return x
++}
++
++func splitmix64(seed uint64) uint64 {
++	return seed
++}
++
++func next(s *uint64) uint64 {
++	*s += 0x9e3779b97f4a7c15
++	return mix64(*s)
++}
++
++func rotl(x uint64, k int) uint64 {
++	return (x << k) | (x >> (64 - k))
++}
+diff --git a/misc/detscheddemo/timer_demo.go b/misc/detscheddemo/timer_demo.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..cbbb49e1e368ace4b2cb9a6b35d4bf2cfb341bb9
+--- /dev/null
++++ b/misc/detscheddemo/timer_demo.go
+@@ -0,0 +1,62 @@
++package main
++
++import (
++	"flag"
++	"fmt"
++	"runtime"
++	"sync"
++	"time"
++)
++
++func main() {
++	workers := flag.Int("workers", 64, "number of timer workers")
++	rounds := flag.Int("rounds", 2000, "timer rounds per worker")
++	procs := flag.Int("procs", 1, "GOMAXPROCS")
++	flag.Parse()
++
++	runtime.GOMAXPROCS(*procs)
++	h := runTimerWorkload(*workers, *rounds)
++	fmt.Printf("%016x\n", h)
++}
++
++func runTimerWorkload(workers, rounds int) uint64 {
++	type result struct {
++		id  int
++		acc uint64
++	}
++	out := make(chan result, workers)
++	var wg sync.WaitGroup
++	wg.Add(workers)
++
++	for w := 0; w < workers; w++ {
++		id := uint64(w + 1)
++		go func() {
++			defer wg.Done()
++			acc := uint64(0x510e527fade682d1 ^ id)
++			for i := 0; i < rounds; i++ {
++				<-time.After(time.Nanosecond)
++				acc ^= (uint64(i+1) * 0x9e3779b97f4a7c15) ^ id
++				acc = (acc << 11) | (acc >> 53)
++				acc *= 0x94d049bb133111eb
++			}
++			out <- result{id: int(id), acc: acc}
++		}()
++	}
++
++	go func() {
++		wg.Wait()
++		close(out)
++	}()
++
++	results := make([]uint64, workers+1)
++	for r := range out {
++		results[r.id] = r.acc
++	}
++
++	h := uint64(0xcbf29ce484222325)
++	for i := 1; i <= workers; i++ {
++		h ^= results[i]
++		h *= 0x100000001b3
++	}
++	return h
++}
+diff --git a/src/internal/runtime/maps/map.go b/src/internal/runtime/maps/map.go
+index 515558a94f635a4c7d74a1f031a5c792ae490b14..e8f8bb2688ef5a5d8e3cb73a570ba3022f3f7717 100644
+--- a/src/internal/runtime/maps/map.go
++++ b/src/internal/runtime/maps/map.go
+@@ -266,7 +266,7 @@ func NewMap(mt *abi.MapType, hint uintptr, m *Map, maxAlloc uintptr) *Map {
+ 		m = new(Map)
+ 	}
+ 
+-	m.seed = uintptr(rand())
++	m.seed = mapSeedNewMap()
+ 
+ 	if hint <= abi.MapGroupSlots {
+ 		// A small map can fill all 8 slots, so no need to increase
+@@ -330,7 +330,7 @@ func NewMap(mt *abi.MapType, hint uintptr, m *Map, maxAlloc uintptr) *Map {
+ 
+ func NewEmptyMap() *Map {
+ 	m := new(Map)
+-	m.seed = uintptr(rand())
++	m.seed = mapSeedEmptyMap()
+ 	// See comment in NewMap. No need to eager allocate a group.
+ 	return m
+ }
+@@ -675,7 +675,7 @@ func (m *Map) Delete(typ *abi.MapType, key unsafe.Pointer) {
+ 		// Reset the hash seed to make it more difficult for attackers
+ 		// to repeatedly trigger hash collisions. See
+ 		// https://go.dev/issue/25237.
+-		m.seed = uintptr(rand())
++		m.seed = mapSeedAfterDelete(m.clearSeq)
+ 	}
+ 
+ 	if m.writing == 0 {
+@@ -762,7 +762,7 @@ func (m *Map) Clear(typ *abi.MapType) {
+ 
+ 	// Reset the hash seed to make it more difficult for attackers to
+ 	// repeatedly trigger hash collisions. See https://go.dev/issue/25237.
+-	m.seed = uintptr(rand())
++	m.seed = mapSeedAfterClear(m.clearSeq)
+ 
+ 	if m.writing == 0 {
+ 		fatal("concurrent map writes")
+diff --git a/src/internal/runtime/maps/runtime.go b/src/internal/runtime/maps/runtime.go
+index 8bba23f07003bd036b75a2ac473775240998d0ab..4f851c42bc6e0033bc9634262cef958abe51c5d7 100644
+--- a/src/internal/runtime/maps/runtime.go
++++ b/src/internal/runtime/maps/runtime.go
+@@ -21,6 +21,46 @@ func fatal(s string)
+ //go:linkname rand
+ func rand() uint64
+ 
++//go:linkname detschedMapRand runtime.detschedMapRand
++func detschedMapRand(salt uintptr) uint64
++
++func maprand(salt uintptr) uint64 {
++	return detschedMapRand(salt)
++}
++
++const (
++	mapSeedSaltNewMap      = uintptr(0x6d617001)
++	mapSeedSaltEmptyMap    = uintptr(0x6d617002)
++	mapSeedSaltAfterDelete = uintptr(0x6d617003)
++	mapSeedSaltAfterClear  = uintptr(0x6d617004)
++	mapIterSaltEntryOffset = uintptr(0x69746501)
++	mapIterSaltDirOffset   = uintptr(0x69746502)
++)
++
++func mapSeedNewMap() uintptr {
++	return uintptr(maprand(mapSeedSaltNewMap))
++}
++
++func mapSeedEmptyMap() uintptr {
++	return uintptr(maprand(mapSeedSaltEmptyMap))
++}
++
++func mapSeedAfterDelete(clearSeq uint64) uintptr {
++	return uintptr(maprand(mapSeedSaltAfterDelete ^ uintptr(clearSeq)))
++}
++
++func mapSeedAfterClear(clearSeq uint64) uintptr {
++	return uintptr(maprand(mapSeedSaltAfterClear ^ uintptr(clearSeq)))
++}
++
++func mapIterEntryOffset() uint64 {
++	return maprand(mapIterSaltEntryOffset)
++}
++
++func mapIterDirOffset() uint64 {
++	return maprand(mapIterSaltDirOffset)
++}
++
+ //go:linkname typedmemmove
+ func typedmemmove(typ *abi.Type, dst, src unsafe.Pointer)
+ 
+diff --git a/src/internal/runtime/maps/table.go b/src/internal/runtime/maps/table.go
+index 977f3091ade20383446ca3735369734217b43a2e..c2a4aff05bf66e6916260b59fd3cf9b56d511d0f 100644
+--- a/src/internal/runtime/maps/table.go
++++ b/src/internal/runtime/maps/table.go
+@@ -691,8 +691,8 @@ func (it *Iter) Init(typ *abi.MapType, m *Map) {
+ 	}
+ 
+ 	it.m = m
+-	it.entryOffset = rand()
+-	it.dirOffset = rand()
++	it.entryOffset = mapIterEntryOffset()
++	it.dirOffset = mapIterDirOffset()
+ 	it.globalDepth = m.globalDepth
+ 	it.dirIdx = dirIdx
+ 	it.group = groupSmall
+diff --git a/src/runtime/alg.go b/src/runtime/alg.go
+index c5951dc20b8a53b17c792a2af9052a5f0a82410e..21a6b485839852dca99e906d8668d07db256ec6c 100644
+--- a/src/runtime/alg.go
++++ b/src/runtime/alg.go
+@@ -402,6 +402,12 @@ func alginit() {
+ 		initAlgAES()
+ 		return
+ 	}
++	if detschedEnabled() {
++		for i := range hashkey {
++			hashkey[i] = uintptr(detschedHashKeyWord(i))
++		}
++		return
++	}
+ 	for i := range hashkey {
+ 		hashkey[i] = uintptr(bootstrapRand())
+ 	}
+@@ -411,6 +417,12 @@ func initAlgAES() {
+ 	useAeshash = true
+ 	// Initialize with random data so hash collisions will be hard to engineer.
+ 	key := (*[hashRandomBytes / 8]uint64)(unsafe.Pointer(&aeskeysched))
++	if detschedEnabled() {
++		for i := range key {
++			key[i] = detschedAESKeyWord(i)
++		}
++		return
++	}
+ 	for i := range key {
+ 		key[i] = bootstrapRand()
+ 	}
+diff --git a/src/runtime/cpuprof.go b/src/runtime/cpuprof.go
+index ea4d3a8cb0bb33495ef6a104a7860ee7f88a8655..13d1c108778e48ef5808152e3b52d55d43548e9d 100644
+--- a/src/runtime/cpuprof.go
++++ b/src/runtime/cpuprof.go
+@@ -66,6 +66,10 @@ var cpuprof cpuProfile
+ // the [testing] package's -test.cpuprofile flag instead of calling
+ // SetCPUProfileRate directly.
+ func SetCPUProfileRate(hz int) {
++	if !detschedCPUProfileAllowed(hz) {
++		print("runtime: cpu profiling disabled in deterministic scheduler mode\n")
++		return
++	}
+ 	// Clamp hz to something reasonable.
+ 	if hz < 0 {
+ 		hz = 0
+diff --git a/src/runtime/detsched.go b/src/runtime/detsched.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..71d32d91a3df8eaf258fbbcec9a3c236e0e53f5c
+--- /dev/null
++++ b/src/runtime/detsched.go
+@@ -0,0 +1,146 @@
++// Copyright 2026 The Go Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++package runtime
++
++import (
++	"internal/runtime/atomic"
++	_ "unsafe"
++)
++
++var detsched struct {
++	enabled atomic.Bool
++	seed    uint64
++}
++
++const (
++	detschedSaltMix          = 0x9e3779b97f4a7c15
++	detschedSaltRunNext      = 0x72756e6e65787400
++	detschedSaltRunQPutSlow  = 0x72716d6978000001
++	detschedSaltRunQPutBatch = 0x72716d6978000002
++	detschedSaltSelect       = 0x73656c6563740000
++	detschedSaltRandInit     = 0x72616e6400000000
++	detschedSaltHashKey      = 0x6861736800000000
++	detschedSaltAESKey       = 0x6165736800000000
++)
++
++func detschedInit() {
++	if debug.detsched == 0 && debug.detschedseed == 0 {
++		return
++	}
++	seed := uint64(debug.detschedseed)
++	if seed == 0 {
++		seed = 1
++	}
++	detsched.seed = seed
++	detsched.enabled.Store(true)
++
++	// Deterministic mode always disables async preemption and
++	// adaptive GOMAXPROCS background updates. It also disables
++	// runtime tracing and memory profiling to avoid background noise.
++	debug.asyncpreemptoff = 1
++	debug.updatemaxprocs = 0
++	debug.traceallocfree.Store(0)
++	MemProfileRate = 0
++	detschedForceTimerChanSync()
++}
++
++func detschedEnabled() bool {
++	return detsched.enabled.Load()
++}
++
++func detschedRequested() bool {
++	return detschedEnabled() || debug.detsched != 0 || debug.detschedseed != 0
++}
++
++func detschedForceTimerChanSync() {
++	if detschedRequested() {
++		debug.asynctimerchan.Store(0)
++	}
++}
++
++func sysmonEnabled() bool {
++	return haveSysmon && !detschedEnabled()
++}
++
++func detschedTraceAllowed() bool {
++	return !detschedEnabled()
++}
++
++func detschedCPUProfileAllowed(hz int) bool {
++	return !detschedEnabled() || hz <= 0
++}
++
++func schedulerRandomized() bool {
++	return raceenabled || detschedEnabled()
++}
++
++func detschedForceStartupProcs(procs int32) int32 {
++	if detschedEnabled() {
++		return 1
++	}
++	return procs
++}
++
++func schedulerRandnFrom(n uint32, salt uint64) uint32 {
++	if n <= 1 {
++		return 0
++	}
++	if !detschedEnabled() {
++		return cheaprandn(n)
++	}
++	x := detsched.seed ^ (salt + detschedSaltMix)
++	x ^= x >> 30
++	x *= 0xbf58476d1ce4e5b9
++	x ^= x >> 27
++	x *= 0x94d049bb133111eb
++	x ^= x >> 31
++	return uint32(x % uint64(n))
++}
++
++func schedulerDropRunNext(goid uint64) bool {
++	return schedulerRandomized() && schedulerRandnFrom(2, detschedSaltRunNext^goid) == 0
++}
++
++func schedulerShuffleIndexRunQPutSlow(i uint32, goid uint64) uint32 {
++	return schedulerRandnFrom(i+1, detschedSaltRunQPutSlow^uint64(i)^goid)
++}
++
++func schedulerShuffleIndexRunQPutBatch(i uint32, goid uint64) uint32 {
++	return schedulerRandnFrom(i+1, detschedSaltRunQPutBatch^uint64(i)^goid)
++}
++
++func schedulerSelectPermuteIndex(i, norder int) uint32 {
++	return schedulerRandnFrom(uint32(norder+1), detschedSaltSelect^uint64(i)^uint64(norder))
++}
++
++func detschedRand64(salt uint64) uint64 {
++	x := detsched.seed ^ (salt + detschedSaltMix)
++	x ^= x >> 30
++	x *= 0xbf58476d1ce4e5b9
++	x ^= x >> 27
++	x *= 0x94d049bb133111eb
++	x ^= x >> 31
++	return x
++}
++
++func detschedRandInitWord(i int) uint64 {
++	return detschedRand64(detschedSaltRandInit | uint64(i))
++}
++
++func detschedHashKeyWord(i int) uint64 {
++	return detschedRand64(detschedSaltHashKey | uint64(i))
++}
++
++func detschedAESKeyWord(i int) uint64 {
++	return detschedRand64(detschedSaltAESKey | uint64(i))
++}
++
++//go:linkname detschedMapRand runtime.detschedMapRand
++func detschedMapRand(salt uintptr) uint64 {
++	if !detschedEnabled() {
++		return rand()
++	}
++	return detschedRand64(uint64(salt))
++}
+diff --git a/src/runtime/proc.go b/src/runtime/proc.go
+index 005c875cbf180198a4aa9123288b6daca27acbdd..494a3ff5335a950eb5bdec9b257b630b784e887c 100644
+--- a/src/runtime/proc.go
++++ b/src/runtime/proc.go
+@@ -170,7 +170,7 @@ func main() {
+ 	// Allow newproc to start new Ms.
+ 	mainStarted = true
+ 
+-	if haveSysmon {
++	if sysmonEnabled() {
+ 		systemstack(func() {
+ 			newm(sysmon, nil, -1)
+ 		})
+@@ -870,6 +870,7 @@ func schedinit() {
+ 	if parsedGodebug {
+ 		parseRuntimeDebugVars(godebug)
+ 	}
++	detschedInit()
+ 	ticks.init() // run as early as possible
+ 	moduledataverify()
+ 	stackinit()
+@@ -933,6 +934,7 @@ func schedinit() {
+ 		//    just numCPUStartup).
+ 		procs = defaultGOMAXPROCS(numCPUStartup)
+ 	}
++	procs = detschedForceStartupProcs(procs)
+ 	if procresize(procs) != nil {
+ 		throw("unknown runnable goroutine during bootstrap")
+ 	}
+@@ -4735,6 +4737,7 @@ const debugExtendGrunningNoP = false
+ //go:nosplit
+ //go:linkname entersyscall
+ func entersyscall() {
++
+ 	// N.B. getcallerfp cannot be written directly as argument in the call
+ 	// to reentersyscall because it forces spilling the other arguments to
+ 	// the stack. This results in exceeding the nosplit stack requirements
+@@ -4789,6 +4792,7 @@ func entersyscallHandleGCWait(trace traceLocker) {
+ //go:linkname entersyscallblock
+ //go:nosplit
+ func entersyscallblock() {
++
+ 	gp := getg()
+ 
+ 	gp.m.locks++ // see comment in entersyscall
+@@ -7468,15 +7472,13 @@ func runqempty(pp *p) bool {
+ // With the randomness here, as long as the tests pass
+ // consistently with -race, they shouldn't have latent scheduling
+ // assumptions.
+-const randomizeScheduler = raceenabled
+-
+ // runqput tries to put g on the local runnable queue.
+ // If next is false, runqput adds g to the tail of the runnable queue.
+ // If next is true, runqput puts g in the pp.runnext slot.
+ // If the run queue is full, runnext puts g on the global queue.
+ // Executed only by the owner P.
+ func runqput(pp *p, gp *g, next bool) {
+-	if !haveSysmon && next {
++	if !sysmonEnabled() && next {
+ 		// A runnext goroutine shares the same time slice as the
+ 		// current goroutine (inheritTime from runqget). To prevent a
+ 		// ping-pong pair of goroutines from starving all others, we
+@@ -7487,7 +7489,7 @@ func runqput(pp *p, gp *g, next bool) {
+ 		// risk starvation.
+ 		next = false
+ 	}
+-	if randomizeScheduler && next && randn(2) == 0 {
++	if next && schedulerDropRunNext(uint64(gp.goid)) {
+ 		next = false
+ 	}
+ 
+@@ -7538,9 +7540,9 @@ func runqputslow(pp *p, gp *g, h, t uint32) bool {
+ 	}
+ 	batch[n] = gp
+ 
+-	if randomizeScheduler {
++	if schedulerRandomized() {
+ 		for i := uint32(1); i <= n; i++ {
+-			j := cheaprandn(i + 1)
++			j := schedulerShuffleIndexRunQPutSlow(i, uint64(batch[i].goid))
+ 			batch[i], batch[j] = batch[j], batch[i]
+ 		}
+ 	}
+@@ -7576,12 +7578,13 @@ func runqputbatch(pp *p, q *gQueue) {
+ 		n++
+ 	}
+ 
+-	if randomizeScheduler {
++	if schedulerRandomized() {
+ 		off := func(o uint32) uint32 {
+ 			return (pp.runqtail + o) % uint32(len(pp.runq))
+ 		}
+ 		for i := uint32(1); i < n; i++ {
+-			j := cheaprandn(i + 1)
++			gpi := pp.runq[off(i)].ptr()
++			j := schedulerShuffleIndexRunQPutBatch(i, uint64(gpi.goid))
+ 			pp.runq[off(i)], pp.runq[off(j)] = pp.runq[off(j)], pp.runq[off(i)]
+ 		}
+ 	}
+diff --git a/src/runtime/rand.go b/src/runtime/rand.go
+index 1739e9f8f5f4eb1fb0042c4c2a967fe05745f890..c8bd9940dcfc16c9e45cdf5984ce8a58c9f23896 100644
+--- a/src/runtime/rand.go
++++ b/src/runtime/rand.go
+@@ -42,7 +42,19 @@ func randinit() {
+ 	}
+ 
+ 	seed := &globalRand.seed
+-	if len(startupRand) >= 16 &&
++	if detschedEnabled() {
++		for i := 0; i < len(seed); i += 8 {
++			x := detschedRandInitWord(i / 8)
++			seed[i+0] ^= byte(x)
++			seed[i+1] ^= byte(x >> 8)
++			seed[i+2] ^= byte(x >> 16)
++			seed[i+3] ^= byte(x >> 24)
++			seed[i+4] ^= byte(x >> 32)
++			seed[i+5] ^= byte(x >> 40)
++			seed[i+6] ^= byte(x >> 48)
++			seed[i+7] ^= byte(x >> 56)
++		}
++	} else if len(startupRand) >= 16 &&
+ 		// Check that at least the first two words of startupRand weren't
+ 		// cleared by any libc initialization.
+ 		!allZero(startupRand[:8]) && !allZero(startupRand[8:16]) {
+diff --git a/src/runtime/runtime1.go b/src/runtime/runtime1.go
+index 965ff8ab5167d5f106ed6d153ee883c150fca4b4..2ed63c05b8ecec509ef416b8a385d44f0ec8a7c5 100644
+--- a/src/runtime/runtime1.go
++++ b/src/runtime/runtime1.go
+@@ -331,6 +331,8 @@ var debug struct {
+ 	traceCheckStackOwnership int32
+ 	profstackdepth           int32
+ 	dataindependenttiming    int32
++	detsched                 int32
++	detschedseed             int32
+ 
+ 	// debug.malloc is used as a combined debug check
+ 	// in the malloc function and should be set
+@@ -390,6 +392,8 @@ var dbgvars = []*dbgVar{
+ 	{name: "madvdontneed", value: &debug.madvdontneed},
+ 	{name: "panicnil", atomic: &debug.panicnil},
+ 	{name: "profstackdepth", value: &debug.profstackdepth, def: 128},
++	{name: "detsched", value: &debug.detsched},
++	{name: "detschedseed", value: &debug.detschedseed},
+ 	{name: "sbrk", value: &debug.sbrk},
+ 	{name: "scavtrace", value: &debug.scavtrace},
+ 	{name: "scheddetail", value: &debug.scheddetail},
+@@ -554,6 +558,10 @@ func parsegodebug(godebug string, seen map[string]bool) {
+ 	if debug.cgocheck > 1 {
+ 		throw("cgocheck > 1 mode is no longer supported at runtime. Use GOEXPERIMENT=cgocheck2 at build time instead.")
+ 	}
++
++	// Keep timer channels in synchronous mode whenever detsched is requested.
++	// This removes the need for users to set an extra asynctimerchan knob.
++	detschedForceTimerChanSync()
+ }
+ 
+ //go:linkname setTraceback runtime/debug.SetTraceback
+diff --git a/src/runtime/select.go b/src/runtime/select.go
+index 553f6960eb1286a5f24981cfee64e1e4bfa3b6e1..42c7aece19262f69b7cf4062b9d84828f8c86ab6 100644
+--- a/src/runtime/select.go
++++ b/src/runtime/select.go
+@@ -188,7 +188,8 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
+ 			cas.c.timer.maybeRunChan(cas.c)
+ 		}
+ 
+-		j := cheaprandn(uint32(norder + 1))
++		// Keep select permutation deterministic when detsched is enabled.
++		j := schedulerSelectPermuteIndex(i, norder)
+ 		pollorder[norder] = pollorder[j]
+ 		pollorder[j] = uint16(i)
+ 		norder++
+diff --git a/src/runtime/trace.go b/src/runtime/trace.go
+index 5f568d205ef436adc542a3d628c5d66e1540cebb..53c1a157333d3eacc78ae9bc981cfe538292b24d 100644
+--- a/src/runtime/trace.go
++++ b/src/runtime/trace.go
+@@ -316,6 +316,9 @@ var (
+ // Most clients should use the [runtime/trace] package or the [testing] package's
+ // -test.trace flag instead of calling StartTrace directly.
+ func StartTrace() error {
++	if !detschedTraceAllowed() {
++		return errorString("tracing disabled in deterministic scheduler mode")
++	}
+ 	if traceEnabled() || traceShuttingDown() {
+ 		return errorString("tracing is already enabled")
+ 	}
+diff --git a/src/testing/synctest/detsched_demo_test.go b/src/testing/synctest/detsched_demo_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..a66bfae863354b7cceb5a3966d69001bd65934da
+--- /dev/null
++++ b/src/testing/synctest/detsched_demo_test.go
+@@ -0,0 +1,84 @@
++// Copyright 2026 The Go Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++package synctest_test
++
++import (
++	"runtime"
++	"testing"
++	"testing/synctest"
++)
++
++func TestDetSchedSeededBubbleHash(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		const workers = 64
++		const iters = 1500
++
++		runtime.GOMAXPROCS(1)
++
++		start := make(chan struct{})
++		out := make(chan uint64, workers)
++		for i := 0; i < workers; i++ {
++			workerID := uint64(i + 1)
++			go func() {
++				<-start
++				state := splitmix64(workerID*0x9e3779b97f4a7c15 + 0x243f6a8885a308d3)
++				acc := uint64(0x6a09e667f3bcc909 ^ workerID)
++				for j := 0; j < iters; j++ {
++					a := next(&state)
++					b := next(&state)
++					v := arithmetic(a, b, workerID, uint64(j))
++					acc ^= rotl(v+uint64(j), int((workerID+uint64(j))%63+1))
++					acc *= 0x9e3779b97f4a7c15
++					if j&15 == 0 {
++						runtime.Gosched()
++					}
++				}
++				out <- acc
++			}()
++		}
++		close(start)
++
++		hash := uint64(0xcbf29ce484222325)
++		for i := 0; i < workers; i++ {
++			v := <-out
++			hash ^= mix(v ^ uint64(i+1))
++			hash *= 0x100000001b3
++		}
++		t.Logf("detsched-hash=%016x", hash)
++	})
++}
++
++func arithmetic(a, b, workerID, iter uint64) uint64 {
++	x := a*0x9e3779b97f4a7c15 + b
++	x ^= rotl(workerID+iter+1, int((workerID+iter)%63+1))
++	x = (x ^ (x >> 29)) * 0xbf58476d1ce4e5b9
++	x ^= x >> 32
++	return x
++}
++
++func mix(x uint64) uint64 {
++	x ^= x >> 30
++	x *= 0xbf58476d1ce4e5b9
++	x ^= x >> 27
++	x *= 0x94d049bb133111eb
++	x ^= x >> 31
++	return x
++}
++
++func splitmix64(seed uint64) uint64 {
++	return seed
++}
++
++func next(s *uint64) uint64 {
++	*s += 0x9e3779b97f4a7c15
++	z := *s
++	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
++	z = (z ^ (z >> 27)) * 0x94d049bb133111eb
++	return z ^ (z >> 31)
++}
++
++func rotl(x uint64, k int) uint64 {
++	return (x << k) | (x >> (64 - k))
++}
