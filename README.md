@@ -126,7 +126,7 @@ In `misc/detscheddemo`:
 Stress demo (`stress_demo.go`) is the high-intensity integration test:
 
 - hundreds of goroutines
-- >1M `runtime.Gosched` yields in default config
+- more than 1M `runtime.Gosched` yields in default config
 - mixed select/map/timer/alloc/GC pressure behavior in one run
 
 ### Applying patch manually
