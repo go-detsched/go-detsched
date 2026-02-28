@@ -7,9 +7,12 @@ This repository is meant to be the practical way to use and maintain the `detsch
 ## What this repo contains
 
 - `detsched-only-feature.git.patch`: git-native patch (includes file modes)
+- `overlay/`: full-file copies of changed files for easier review
 - `DETSCHED_FEATURE.md`: implementation and design notes
 - `scripts/build-go-detsched.sh`: reproducible build script
 - `scripts/verify-detsched.sh`: applies patch, builds, and runs demos
+- `scripts/sync-overlay.sh`: regenerates full-file overlay from patch
+- `scripts/verify-overlay.sh`: verifies overlay exactly matches patched upstream
 - CI workflow to continuously validate patch applicability
 
 ## Quick start
@@ -38,6 +41,17 @@ This runs:
 - patch apply
 - `make.bash`
 - `misc/detscheddemo/run_all_demos.sh`
+
+## Full-file overlay workflow
+
+Keep patch and full files in sync:
+
+```bash
+./scripts/sync-overlay.sh --go-tag go1.26.0
+./scripts/verify-overlay.sh --go-tag go1.26.0
+```
+
+`overlay/` is read-friendly; `detsched-only-feature.git.patch` remains the canonical artifact for apply.
 
 ## Compatibility policy
 

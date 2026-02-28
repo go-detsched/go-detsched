@@ -23,3 +23,7 @@ jobs:
         run: |
           chmod +x scripts/*.sh
           ./scripts/verify-detsched.sh --go-tag go1.26.0
+
+      - name: Verify overlay matches patched upstream
+        run: |
+          ./scripts/verify-overlay.sh --go-tag go1.26.0
