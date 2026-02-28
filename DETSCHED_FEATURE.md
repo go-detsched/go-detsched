@@ -167,19 +167,11 @@ Rationale:
 Added `misc/detscheddemo` programs/scripts:
 
 - arithmetic workload demo (`main.go`)
-- `select` multi-ready demo (`select_demo.go`)
-- map iteration demo (`map_demo.go`)
-- GC pressure demo (`gc_demo.go`)
-- timer demo (`timer_demo.go`)
 - high-intensity combined stress demo (`stress_demo.go`) that runs hundreds of goroutines and over a million `Gosched` yields while exercising select/map/timer/alloc/GC paths together
 
 Runner scripts:
 
 - `run_seed_demo.sh`
-- `run_select_demo.sh`
-- `run_map_demo.sh`
-- `run_gc_demo.sh`
-- `run_timer_demo.sh`
 - `run_stress_demo.sh`
 - `run_synctest_demo.sh`
 - `run_all_demos.sh`
