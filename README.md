@@ -2,17 +2,16 @@
 
 Deterministic scheduler patch distribution for Go `1.26.0`.
 
-This repository is meant to be the practical way to use and maintain the `detsched` runtime feature without carrying a long-lived full Go fork.
+This repo distributes a patch and simple scripts so you can build a patched Go toolchain without maintaining a full Go fork.
 
 ## What this repo contains
 
 - `detsched-only-feature.git.patch`: git-native patch (includes file modes)
-- `overlay/`: full-file copies of changed files for easier review
 - `DETSCHED_FEATURE.md`: implementation and design notes
-- `scripts/build-go-detsched.sh`: applies patch, builds, runs demos, installs
-- `scripts/sync-overlay.sh`: regenerates full-file overlay from patch
-- `scripts/verify-overlay.sh`: verifies overlay exactly matches patched upstream
-- CI workflow to continuously validate patch applicability
+- `scripts/build-go-detsched.sh`: main script (apply + build + demo verify + optional install)
+- `scripts/doctor.sh`: quick local sanity check
+- `overlay/`: full-file copies of changed files (readability/review)
+- `scripts/sync-overlay.sh` and `scripts/verify-overlay.sh`: overlay maintenance helpers
 
 ## Quick start
 
@@ -28,13 +27,17 @@ export PATH="$GOROOT/bin:$PATH"
 GODEBUG=detsched=1,detschedseed=12345 go run ./your_program.go
 ```
 
-## Build-only mode (no install)
+## Common modes
 
 ```bash
+# Build + run demos, but do not install into --prefix
 ./scripts/build-go-detsched.sh --go-tag go1.26.0 --no-install
+
+# Build only (skip demo verification)
+./scripts/build-go-detsched.sh --go-tag go1.26.0 --no-verify
 ```
 
-The default build script runs:
+By default, `build-go-detsched.sh` does:
 
 - apply check
 - patch apply
@@ -42,29 +45,16 @@ The default build script runs:
 - `misc/detscheddemo/run_all_demos.sh` (seed + stress + synctest)
 - install to `--prefix` (unless `--no-install`)
 
-## Full-file overlay workflow
+## Overlay workflow (optional)
 
-Keep patch and full files in sync:
+Use only if you want full-file mirrors for review:
 
 ```bash
 ./scripts/sync-overlay.sh --go-tag go1.26.0
 ./scripts/verify-overlay.sh --go-tag go1.26.0
 ```
 
-`overlay/` is read-friendly; `detsched-only-feature.git.patch` remains the canonical artifact for apply.
-
-## Compatibility policy
-
-- Primary target today: `go1.26.0`
-- Each release of this repo should map to exactly one upstream Go tag.
-- Keep changelog notes for rebases when upstream internals move.
-
-## Suggested release tags
-
-Use tags like:
-
-- `v1.26.0-detsched.1`
-- `v1.26.0-detsched.2`
+The patch file is the canonical apply artifact.
 
 ## Notes
 
