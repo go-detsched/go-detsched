@@ -23,7 +23,3 @@ jobs:
         run: |
           chmod +x scripts/*.sh
           ./scripts/build-go-detsched.sh --go-tag go1.26.0 --no-install
-
-      - name: Verify overlay matches patched upstream
-        run: |
-          ./scripts/verify-overlay.sh --go-tag go1.26.0

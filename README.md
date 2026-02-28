@@ -9,9 +9,6 @@ This repo distributes a patch and simple scripts so you can build a patched Go t
 - `detsched-only-feature.git.patch`: git-native patch (includes file modes)
 - `DETSCHED_FEATURE.md`: implementation and design notes
 - `scripts/build-go-detsched.sh`: main script (apply + build + demo verify + optional install)
-- `scripts/doctor.sh`: quick local sanity check
-- `overlay/`: full-file copies of changed files (readability/review)
-- `scripts/sync-overlay.sh` and `scripts/verify-overlay.sh`: overlay maintenance helpers
 
 ## Quick start
 
@@ -44,15 +41,6 @@ By default, `build-go-detsched.sh` does:
 - `make.bash`
 - `misc/detscheddemo/run_all_demos.sh` (seed + stress + synctest)
 - install to `--prefix` (unless `--no-install`)
-
-## Overlay workflow (optional)
-
-Use only if you want full-file mirrors for review:
-
-```bash
-./scripts/sync-overlay.sh --go-tag go1.26.0
-./scripts/verify-overlay.sh --go-tag go1.26.0
-```
 
 The patch file is the canonical apply artifact.
 
