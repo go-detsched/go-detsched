@@ -235,20 +235,16 @@ index 0000000000000000000000000000000000000000..6389526113faa4b67e3d5f2d9338f6a4
 +}
 diff --git a/misc/detscheddemo/run_all_demos.sh b/misc/detscheddemo/run_all_demos.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..a701b7b1ba65774ecffd8b9be6638d6e8e1e113c
+index 0000000000000000000000000000000000000000..088d5394f2293751be28c58fbce9ac3624a8c1fa
 --- /dev/null
 +++ b/misc/detscheddemo/run_all_demos.sh
-@@ -0,0 +1,14 @@
+@@ -0,0 +1,10 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
 +ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 +
 +"$ROOT/run_seed_demo.sh" 12345 99999
-+"$ROOT/run_select_demo.sh" 1 2
-+"$ROOT/run_map_demo.sh" 1 2
-+"$ROOT/run_gc_demo.sh" 1 2
-+"$ROOT/run_timer_demo.sh" 1 2
 +"$ROOT/run_stress_demo.sh" 12345 99999 256 3000
 +"$ROOT/run_synctest_demo.sh" 12345 99999
 +

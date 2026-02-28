@@ -40,7 +40,7 @@ This runs:
 - apply check
 - patch apply
 - `make.bash`
-- `misc/detscheddemo/run_all_demos.sh`
+- `misc/detscheddemo/run_all_demos.sh` (seed + stress + synctest)
 
 ## Full-file overlay workflow
 
