@@ -22,7 +22,7 @@ jobs:
       - name: Verify patch applies and demos pass
         run: |
           chmod +x scripts/*.sh
-          ./scripts/verify-detsched.sh --go-tag go1.26.0
+          ./scripts/build-go-detsched.sh --go-tag go1.26.0 --no-install
 
       - name: Verify overlay matches patched upstream
         run: |

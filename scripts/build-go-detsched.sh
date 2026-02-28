@@ -5,6 +5,8 @@ GO_TAG="go1.26.0"
 PREFIX="${HOME}/.local/go-detsched-1.26.0"
 WORKDIR=""
 PATCH_FILE=""
+VERIFY=1
+INSTALL=1
 
 usage() {
   cat <<'EOF'
@@ -15,6 +17,8 @@ Options:
   --prefix <path>      Install prefix for patched GOROOT
   --workdir <path>     Build workspace (default: mktemp dir)
   --patch <path>       Patch file (default: repo-root/detsched-only-feature.git.patch)
+  --no-verify          Skip demo verification run
+  --no-install         Build+verify but do not install to prefix
   -h, --help           Show help
 EOF
 }
@@ -25,6 +29,8 @@ while [[ $# -gt 0 ]]; do
     --prefix) PREFIX="$2"; shift 2 ;;
     --workdir) WORKDIR="$2"; shift 2 ;;
     --patch) PATCH_FILE="$2"; shift 2 ;;
+    --no-verify) VERIFY=0; shift ;;
+    --no-install) INSTALL=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -50,7 +56,11 @@ fi
 echo "Using workdir: $WORKDIR"
 echo "Target tag: $GO_TAG"
 echo "Patch: $PATCH_FILE"
-echo "Install prefix: $PREFIX"
+echo "Verify demos: $VERIFY"
+echo "Install: $INSTALL"
+if [[ "$INSTALL" -eq 1 ]]; then
+  echo "Install prefix: $PREFIX"
+fi
 
 SRC_DIR="${WORKDIR}/go-src"
 rm -rf "$SRC_DIR"
@@ -61,19 +71,28 @@ git clone --depth 1 --branch "$GO_TAG" https://go.googlesource.com/go "$SRC_DIR"
   git apply --check "$PATCH_FILE"
   git apply "$PATCH_FILE"
   (cd src && ./make.bash)
+  if [[ "$VERIFY" -eq 1 ]]; then
+    (cd misc/detscheddemo && ./run_all_demos.sh)
+  fi
 )
 
-rm -rf "$PREFIX"
-mkdir -p "$(dirname "$PREFIX")"
-cp -a "$SRC_DIR" "$PREFIX"
+if [[ "$INSTALL" -eq 1 ]]; then
+  rm -rf "$PREFIX"
+  mkdir -p "$(dirname "$PREFIX")"
+  cp -a "$SRC_DIR" "$PREFIX"
+fi
 
-cat <<EOF
+if [[ "$INSTALL" -eq 1 ]]; then
+  cat <<EOF
 Done.
 Patched Go installed at: $PREFIX
 Use:
   export GOROOT="$PREFIX"
   export PATH="\$GOROOT/bin:\$PATH"
 EOF
+else
+  echo "Done. Build completed in: $SRC_DIR"
+fi
 
 if [[ "$CLEAN_WORKDIR" -eq 1 ]]; then
   rm -rf "$WORKDIR"

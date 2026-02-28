@@ -9,8 +9,7 @@ This repository is meant to be the practical way to use and maintain the `detsch
 - `detsched-only-feature.git.patch`: git-native patch (includes file modes)
 - `overlay/`: full-file copies of changed files for easier review
 - `DETSCHED_FEATURE.md`: implementation and design notes
-- `scripts/build-go-detsched.sh`: reproducible build script
-- `scripts/verify-detsched.sh`: applies patch, builds, and runs demos
+- `scripts/build-go-detsched.sh`: applies patch, builds, runs demos, installs
 - `scripts/sync-overlay.sh`: regenerates full-file overlay from patch
 - `scripts/verify-overlay.sh`: verifies overlay exactly matches patched upstream
 - CI workflow to continuously validate patch applicability
@@ -29,18 +28,19 @@ export PATH="$GOROOT/bin:$PATH"
 GODEBUG=detsched=1,detschedseed=12345 go run ./your_program.go
 ```
 
-## Verify deterministic demos
+## Build-only mode (no install)
 
 ```bash
-./scripts/verify-detsched.sh --go-tag go1.26.0
+./scripts/build-go-detsched.sh --go-tag go1.26.0 --no-install
 ```
 
-This runs:
+The default build script runs:
 
 - apply check
 - patch apply
 - `make.bash`
 - `misc/detscheddemo/run_all_demos.sh` (seed + stress + synctest)
+- install to `--prefix` (unless `--no-install`)
 
 ## Full-file overlay workflow
 
