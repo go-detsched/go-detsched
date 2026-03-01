@@ -1,6 +1,6 @@
 diff --git a/misc/detscheddemo/fuzz_race_demo.go b/misc/detscheddemo/fuzz_race_demo.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..f3fb6d4a145c9e5ee4051de4f7f4f3c1df95e7ea
+index 0000000000000000000000000000000000000000..16239aab5b349e6a89887cc7d855021d9109049c
 --- /dev/null
 +++ b/misc/detscheddemo/fuzz_race_demo.go
 @@ -0,0 +1,151 @@
@@ -272,7 +272,7 @@ index 0000000000000000000000000000000000000000..271e99d3cf5ba6c1026009a35ec0c679
 +echo "All deterministic demos passed."
 diff --git a/misc/detscheddemo/run_fuzz_race_demo.sh b/misc/detscheddemo/run_fuzz_race_demo.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..c4ef62f85f0fb73a3c6e8f4505ec6b0d509d6f60
+index 0000000000000000000000000000000000000000..622ab8c4619690aac6c77abb155789c51e20af1e
 --- /dev/null
 +++ b/misc/detscheddemo/run_fuzz_race_demo.sh
 @@ -0,0 +1,111 @@

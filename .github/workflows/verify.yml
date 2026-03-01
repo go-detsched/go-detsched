@@ -47,6 +47,8 @@ jobs:
         run: |
           set -o pipefail
           chmod +x scripts/*.sh
+          ./scripts/compile-patch.sh
+          git diff --exit-code -- detsched.git.patch
           ./scripts/build.sh --go-tag go1.26.0 --no-install --no-verify --workdir "$GO_DETSCHED_WORKDIR" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/build.log"
           chmod +x "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/"*.sh
 

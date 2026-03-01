@@ -12,6 +12,7 @@ import (
 var detsched struct {
 	enabled atomic.Bool
 	seed    uint64
+	fuzzSeq atomic.Uint64
 }
 
 const (
@@ -23,10 +24,15 @@ const (
 	detschedSaltRandInit     = 0x72616e6400000000
 	detschedSaltHashKey      = 0x6861736800000000
 	detschedSaltAESKey       = 0x6165736800000000
+	detschedSaltFuzzSeq      = 0x66757a7a73657100
+	detschedSaltFuzzRunNext  = 0x66757a7a72756e00
+	detschedSaltFuzzRunQSlow = 0x66757a7a72717300
+	detschedSaltFuzzRunQBat  = 0x66757a7a72716200
+	detschedSaltFuzzSelect   = 0x66757a7a73656c00
 )
 
 func detschedInit() {
-	if debug.detsched == 0 && debug.detschedseed == 0 {
+	if debug.detsched == 0 && debug.detschedfuzz == 0 && debug.detschedseed == 0 {
 		return
 	}
 	seed := uint64(debug.detschedseed)
@@ -51,7 +57,11 @@ func detschedEnabled() bool {
 }
 
 func detschedRequested() bool {
-	return detschedEnabled() || debug.detsched != 0 || debug.detschedseed != 0
+	return detschedEnabled() || debug.detsched != 0 || debug.detschedfuzz != 0 || debug.detschedseed != 0
+}
+
+func detschedFuzzEnabled() bool {
+	return detschedEnabled() && debug.detschedfuzz != 0
 }
 
 func detschedForceTimerChanSync() {
@@ -103,16 +113,47 @@ func schedulerDropRunNext(goid uint64) bool {
 	return schedulerRandomized() && schedulerRandnFrom(2, detschedSaltRunNext^goid) == 0
 }
 
+func schedulerFuzzDropRunNext(goid uint64) bool {
+	return detschedFuzzOneIn(4, detschedSaltFuzzRunNext^goid)
+}
+
 func schedulerShuffleIndexRunQPutSlow(i uint32, goid uint64) uint32 {
 	return schedulerRandnFrom(i+1, detschedSaltRunQPutSlow^uint64(i)^goid)
+}
+
+func schedulerFuzzShuffleIndexRunQPutSlow(i uint32, goid uint64) uint32 {
+	return schedulerRandnFrom(i+1, detschedFuzzSalt(detschedSaltFuzzRunQSlow)^uint64(i)^goid)
 }
 
 func schedulerShuffleIndexRunQPutBatch(i uint32, goid uint64) uint32 {
 	return schedulerRandnFrom(i+1, detschedSaltRunQPutBatch^uint64(i)^goid)
 }
 
+func schedulerFuzzShuffleIndexRunQPutBatch(i uint32, goid uint64) uint32 {
+	return schedulerRandnFrom(i+1, detschedFuzzSalt(detschedSaltFuzzRunQBat)^uint64(i)^goid)
+}
+
 func schedulerSelectPermuteIndex(i, norder int) uint32 {
-	return schedulerRandnFrom(uint32(norder+1), detschedSaltSelect^uint64(i)^uint64(norder))
+	salt := detschedSaltSelect ^ uint64(i) ^ uint64(norder)
+	if detschedFuzzEnabled() {
+		salt ^= detschedFuzzSalt(detschedSaltFuzzSelect)
+	}
+	return schedulerRandnFrom(uint32(norder+1), salt)
+}
+
+func detschedFuzzSalt(siteSalt uint64) uint64 {
+	seq := detsched.fuzzSeq.Add(1)
+	return siteSalt ^ detschedRand64(detschedSaltFuzzSeq^seq)
+}
+
+func detschedFuzzOneIn(oneIn uint32, siteSalt uint64) bool {
+	if !detschedFuzzEnabled() {
+		return false
+	}
+	if oneIn <= 1 {
+		return true
+	}
+	return schedulerRandnFrom(oneIn, detschedFuzzSalt(siteSalt)) == 0
 }
 
 func detschedRand64(salt uint64) uint64 {
