@@ -41,10 +41,12 @@ func run(workers, iters int) uint64 {
 	}
 
 	out := make(chan result, workers)
+	ready := make(chan struct{}, workers)
 	start := make(chan struct{})
 	for i := 0; i < workers; i++ {
 		id := uint64(i + 1)
 		go func() {
+			ready <- struct{}{}
 			<-start
 			h := uint64(0x9e3779b97f4a7c15 ^ id)
 			local := make(map[uint64]uint64, 32)
@@ -75,6 +77,9 @@ func run(workers, iters int) uint64 {
 		}()
 	}
 
+	for i := 0; i < workers; i++ {
+		<-ready
+	}
 	close(start)
 	hash := uint64(0xcbf29ce484222325)
 	for i := 0; i < workers; i++ {
