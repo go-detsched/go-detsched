@@ -9,9 +9,11 @@ on:
 
 jobs:
   verify-go-1-26:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 45
     env:
       GO_DETSCHED_WORKDIR: ${{ github.workspace }}/.go-detsched-work
+      GO_DETSCHED_LOG_DIR: ${{ github.workspace }}/ci-logs
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,20 +23,77 @@ jobs:
         with:
           go-version: "1.26.0"
 
+      - name: Print runner diagnostics
+        run: |
+          mkdir -p "$GO_DETSCHED_LOG_DIR"
+          {
+            echo "date_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "runner_name=${RUNNER_NAME:-unknown}"
+            echo "runner_os=${RUNNER_OS:-unknown}"
+            echo "runner_arch=${RUNNER_ARCH:-unknown}"
+            echo "github_ref=${GITHUB_REF:-unknown}"
+            echo "github_sha=${GITHUB_SHA:-unknown}"
+            echo "workspace=${GITHUB_WORKSPACE:-unknown}"
+            echo "workdir=$GO_DETSCHED_WORKDIR"
+          } | tee "$GO_DETSCHED_LOG_DIR/runner_env.log"
+          {
+            echo "cpu_count=$(nproc)"
+            uname -a
+            df -h
+            free -h
+          } | tee "$GO_DETSCHED_LOG_DIR/runner_system.log"
+
       - name: Build patched toolchain
         run: |
+          set -o pipefail
           chmod +x scripts/*.sh
-          ./scripts/build.sh --go-tag go1.26.0 --no-install --no-verify --workdir "$GO_DETSCHED_WORKDIR"
+          ./scripts/build.sh --go-tag go1.26.0 --no-install --no-verify --workdir "$GO_DETSCHED_WORKDIR" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/build.log"
           chmod +x "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/"*.sh
 
       - name: Run seed demo
         run: |
-          "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_seed_demo.sh" 12345 99999
+          set -o pipefail
+          "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_seed_demo.sh" 12345 99999 2>&1 | tee "$GO_DETSCHED_LOG_DIR/seed_demo.log"
 
       - name: Run stress demo
         run: |
-          "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_stress_demo.sh" 12345 99999 256 3000
+          set -o pipefail
+          "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_stress_demo.sh" 12345 99999 256 3000 2>&1 | tee "$GO_DETSCHED_LOG_DIR/stress_demo.log"
 
       - name: Run synctest demo
         run: |
-          "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_synctest_demo.sh" 12345 99999
+          set -o pipefail
+          "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_synctest_demo.sh" 12345 99999 2>&1 | tee "$GO_DETSCHED_LOG_DIR/synctest_demo.log"
+
+      - name: Run scheduler fuzzer race demo
+        run: |
+          set -o pipefail
+          DEMO="$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_fuzz_race_demo.sh"
+          if [[ -x "$DEMO" ]]; then
+            "$DEMO" 1 80 3000 8 24 2>&1 | tee "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log"
+          else
+            echo "Skipping fuzzer race demo: script not present in applied patch artifact."
+            echo "Skipping fuzzer race demo: script not present in applied patch artifact." > "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log"
+          fi
+
+      - name: Finalize CI log bundle
+        if: always()
+        run: |
+          mkdir -p "$GO_DETSCHED_LOG_DIR"
+          {
+            echo "run_id=${GITHUB_RUN_ID:-unknown}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT:-unknown}"
+            echo "job=${GITHUB_JOB:-unknown}"
+            echo "sha=${GITHUB_SHA:-unknown}"
+            echo "ref=${GITHUB_REF:-unknown}"
+            echo "completed_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$GO_DETSCHED_LOG_DIR/run_metadata.log"
+          ls -la "$GO_DETSCHED_LOG_DIR" > "$GO_DETSCHED_LOG_DIR/index.log"
+
+      - name: Upload CI logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: detsched-verify-logs-${{ github.run_id }}
+          path: ${{ env.GO_DETSCHED_LOG_DIR }}
+          if-no-files-found: error

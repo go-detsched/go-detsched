@@ -1,3 +1,109 @@
+diff --git a/misc/detscheddemo/fuzz_race_demo.go b/misc/detscheddemo/fuzz_race_demo.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..300782d390df59500c3cf4f12fcfafad65c86836
+--- /dev/null
++++ b/misc/detscheddemo/fuzz_race_demo.go
+@@ -0,0 +1,100 @@
++package main
++
++import (
++	"flag"
++	"fmt"
++	"os"
++	"runtime"
++	"sync"
++)
++
++func brittleHandshake(attempts int) bool {
++	ch := make(chan struct{})
++	done := make(chan bool, 2)
++
++	go func() {
++		ok := false
++		for i := 0; i < attempts; i++ {
++			select {
++			case ch <- struct{}{}:
++				ok = true
++				i = attempts
++			default:
++				runtime.Gosched()
++			}
++		}
++		done <- ok
++	}()
++
++	go func() {
++		ok := false
++		for i := 0; i < attempts; i++ {
++			select {
++			case <-ch:
++				ok = true
++				i = attempts
++			default:
++				runtime.Gosched()
++			}
++		}
++		done <- ok
++	}()
++
++	s1 := <-done
++	s2 := <-done
++	return s1 && s2
++}
++
++func main() {
++	rounds := flag.Int("rounds", 5000, "number of protocol rounds")
++	attempts := flag.Int("attempts", 8, "send/recv attempts per side")
++	noise := flag.Int("noise", 32, "number of scheduler noise goroutines")
++	flag.Parse()
++
++	var wg sync.WaitGroup
++	stop := make(chan struct{})
++	for i := 0; i < *noise; i++ {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			for {
++				select {
++				case <-stop:
++					return
++				default:
++				}
++				runtime.Gosched()
++			}
++		}()
++	}
++
++	const (
++		hashInit = uint64(0xcbf29ce484222325)
++		hashMul  = uint64(0x100000001b3)
++	)
++	hash := hashInit
++	okCount := 0
++	failCount := 0
++	for i := 0; i < *rounds; i++ {
++		ok := brittleHandshake(*attempts)
++		hash ^= uint64(i + 1)
++		if ok {
++			okCount++
++			hash ^= 0x9e3779b97f4a7c15
++		} else {
++			failCount++
++			hash ^= 0x243f6a8885a308d3
++		}
++		hash *= hashMul
++	}
++
++	close(stop)
++	wg.Wait()
++
++	fmt.Printf("rounds=%d ok=%d fail=%d hash=%016x\n", *rounds, okCount, failCount, hash)
++	if failCount > 0 {
++		fmt.Println("status=FAIL brittle protocol lost handshakes")
++		os.Exit(1)
++	}
++	fmt.Println("status=PASS")
++}
 diff --git a/misc/detscheddemo/main.go b/misc/detscheddemo/main.go
 new file mode 100644
 index 0000000000000000000000000000000000000000..b8f65f173af767c1efd768e44b982d38232c1302
@@ -98,10 +204,10 @@ index 0000000000000000000000000000000000000000..b8f65f173af767c1efd768e44b982d38
 +}
 diff --git a/misc/detscheddemo/run_all_demos.sh b/misc/detscheddemo/run_all_demos.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..088d5394f2293751be28c58fbce9ac3624a8c1fa
+index 0000000000000000000000000000000000000000..271e99d3cf5ba6c1026009a35ec0c6790f281c70
 --- /dev/null
 +++ b/misc/detscheddemo/run_all_demos.sh
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,11 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
@@ -110,8 +216,85 @@ index 0000000000000000000000000000000000000000..088d5394f2293751be28c58fbce9ac36
 +"$ROOT/run_seed_demo.sh" 12345 99999
 +"$ROOT/run_stress_demo.sh" 12345 99999 256 3000
 +"$ROOT/run_synctest_demo.sh" 12345 99999
++"$ROOT/run_fuzz_race_demo.sh" 1 80 3000 8 24
 +
 +echo "All deterministic demos passed."
+diff --git a/misc/detscheddemo/run_fuzz_race_demo.sh b/misc/detscheddemo/run_fuzz_race_demo.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..2f4bfe930124813fcd3b949a37632cef9e39c6d0
+--- /dev/null
++++ b/misc/detscheddemo/run_fuzz_race_demo.sh
+@@ -0,0 +1,70 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++GO="$ROOT/bin/go"
++DEMO="$ROOT/misc/detscheddemo/fuzz_race_demo.go"
++
++seed_start="${1:-1}"
++seed_end="${2:-200}"
++rounds="${3:-5000}"
++attempts="${4:-8}"
++noise="${5:-32}"
++
++run_once() {
++  local s="$1"
++  GODEBUG="detsched=1,detschedfuzz=1,detschedseed=${s}" \
++    "$GO" run "$DEMO" -rounds="$rounds" -attempts="$attempts" -noise="$noise"
++}
++
++extract_hash() {
++  sed -n 's/.*hash=\([0-9a-f]\{16\}\).*/\1/p'
++}
++
++pass_seed=""
++pass_hash=""
++fail_seed=""
++fail_hash=""
++
++echo "Scanning seeds ${seed_start}..${seed_end} for brittle handshake failures..."
++for ((s=seed_start; s<=seed_end; s++)); do
++  if out="$(run_once "$s" 2>&1)"; then
++    if [[ -z "$pass_seed" ]]; then
++      pass_seed="$s"
++      pass_hash="$(printf '%s\n' "$out" | extract_hash)"
++    fi
++    continue
++  fi
++
++  fail_seed="$s"
++  fail_hash="$(printf '%s\n' "$out" | extract_hash)"
++  echo "$out"
++  break
++done
++
++if [[ -z "$fail_seed" ]]; then
++  echo "FAIL: no failing seed found in scan window" >&2
++  exit 1
++fi
++
++echo "Found failing seed=${fail_seed} hash=${fail_hash}"
++echo "Re-running failing seed twice to verify deterministic replay..."
++
++o1="$(run_once "$fail_seed" 2>&1 || true)"
++h1="$(printf '%s\n' "$o1" | extract_hash)"
++o2="$(run_once "$fail_seed" 2>&1 || true)"
++h2="$(printf '%s\n' "$o2" | extract_hash)"
++
++echo "$o1"
++echo "$o2"
++
++if [[ "$h1" != "$h2" ]]; then
++  echo "FAIL: failing seed hash changed across reruns" >&2
++  exit 1
++fi
++
++if [[ -n "$pass_seed" ]]; then
++  echo "Found passing seed=${pass_seed} hash=${pass_hash}"
++fi
++
++echo "Fuzzer race demo passed: reproducible failure at seed=${fail_seed} hash=${h1}."
 diff --git a/misc/detscheddemo/run_seed_demo.sh b/misc/detscheddemo/run_seed_demo.sh
 new file mode 100755
 index 0000000000000000000000000000000000000000..a6dc00b6d8f1aebda55d1e33f6aba6ba9d6c7006
@@ -612,10 +795,10 @@ index ea4d3a8cb0bb33495ef6a104a7860ee7f88a8655..13d1c108778e48ef5808152e3b52d55d
  		hz = 0
 diff --git a/src/runtime/detsched.go b/src/runtime/detsched.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..71d32d91a3df8eaf258fbbcec9a3c236e0e53f5c
+index 0000000000000000000000000000000000000000..356a0da111ac6a6e5dd103a1cd68040ccbd47b1d
 --- /dev/null
 +++ b/src/runtime/detsched.go
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,187 @@
 +// Copyright 2026 The Go Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style
 +// license that can be found in the LICENSE file.
@@ -630,6 +813,7 @@ index 0000000000000000000000000000000000000000..71d32d91a3df8eaf258fbbcec9a3c236
 +var detsched struct {
 +	enabled atomic.Bool
 +	seed    uint64
++	fuzzSeq atomic.Uint64
 +}
 +
 +const (
@@ -641,10 +825,15 @@ index 0000000000000000000000000000000000000000..71d32d91a3df8eaf258fbbcec9a3c236
 +	detschedSaltRandInit     = 0x72616e6400000000
 +	detschedSaltHashKey      = 0x6861736800000000
 +	detschedSaltAESKey       = 0x6165736800000000
++	detschedSaltFuzzSeq      = 0x66757a7a73657100
++	detschedSaltFuzzRunNext  = 0x66757a7a72756e00
++	detschedSaltFuzzRunQSlow = 0x66757a7a72717300
++	detschedSaltFuzzRunQBat  = 0x66757a7a72716200
++	detschedSaltFuzzSelect   = 0x66757a7a73656c00
 +)
 +
 +func detschedInit() {
-+	if debug.detsched == 0 && debug.detschedseed == 0 {
++	if debug.detsched == 0 && debug.detschedfuzz == 0 && debug.detschedseed == 0 {
 +		return
 +	}
 +	seed := uint64(debug.detschedseed)
@@ -669,7 +858,11 @@ index 0000000000000000000000000000000000000000..71d32d91a3df8eaf258fbbcec9a3c236
 +}
 +
 +func detschedRequested() bool {
-+	return detschedEnabled() || debug.detsched != 0 || debug.detschedseed != 0
++	return detschedEnabled() || debug.detsched != 0 || debug.detschedfuzz != 0 || debug.detschedseed != 0
++}
++
++func detschedFuzzEnabled() bool {
++	return detschedEnabled() && debug.detschedfuzz != 0
 +}
 +
 +func detschedForceTimerChanSync() {
@@ -721,16 +914,47 @@ index 0000000000000000000000000000000000000000..71d32d91a3df8eaf258fbbcec9a3c236
 +	return schedulerRandomized() && schedulerRandnFrom(2, detschedSaltRunNext^goid) == 0
 +}
 +
++func schedulerFuzzDropRunNext(goid uint64) bool {
++	return detschedFuzzOneIn(4, detschedSaltFuzzRunNext^goid)
++}
++
 +func schedulerShuffleIndexRunQPutSlow(i uint32, goid uint64) uint32 {
 +	return schedulerRandnFrom(i+1, detschedSaltRunQPutSlow^uint64(i)^goid)
++}
++
++func schedulerFuzzShuffleIndexRunQPutSlow(i uint32, goid uint64) uint32 {
++	return schedulerRandnFrom(i+1, detschedFuzzSalt(detschedSaltFuzzRunQSlow)^uint64(i)^goid)
 +}
 +
 +func schedulerShuffleIndexRunQPutBatch(i uint32, goid uint64) uint32 {
 +	return schedulerRandnFrom(i+1, detschedSaltRunQPutBatch^uint64(i)^goid)
 +}
 +
++func schedulerFuzzShuffleIndexRunQPutBatch(i uint32, goid uint64) uint32 {
++	return schedulerRandnFrom(i+1, detschedFuzzSalt(detschedSaltFuzzRunQBat)^uint64(i)^goid)
++}
++
 +func schedulerSelectPermuteIndex(i, norder int) uint32 {
-+	return schedulerRandnFrom(uint32(norder+1), detschedSaltSelect^uint64(i)^uint64(norder))
++	salt := detschedSaltSelect ^ uint64(i) ^ uint64(norder)
++	if detschedFuzzEnabled() {
++		salt ^= detschedFuzzSalt(detschedSaltFuzzSelect)
++	}
++	return schedulerRandnFrom(uint32(norder+1), salt)
++}
++
++func detschedFuzzSalt(siteSalt uint64) uint64 {
++	seq := detsched.fuzzSeq.Add(1)
++	return siteSalt ^ detschedRand64(detschedSaltFuzzSeq^seq)
++}
++
++func detschedFuzzOneIn(oneIn uint32, siteSalt uint64) bool {
++	if !detschedFuzzEnabled() {
++		return false
++	}
++	if oneIn <= 1 {
++		return true
++	}
++	return schedulerRandnFrom(oneIn, detschedFuzzSalt(siteSalt)) == 0
 +}
 +
 +func detschedRand64(salt uint64) uint64 {
@@ -763,7 +987,7 @@ index 0000000000000000000000000000000000000000..71d32d91a3df8eaf258fbbcec9a3c236
 +	return detschedRand64(uint64(salt))
 +}
 diff --git a/src/runtime/proc.go b/src/runtime/proc.go
-index 005c875cbf180198a4aa9123288b6daca27acbdd..494a3ff5335a950eb5bdec9b257b630b784e887c 100644
+index 005c875cbf180198a4aa9123288b6daca27acbdd..c8bd2539bf9eb6d78e2fb0bcc12c0a29808d0a6e 100644
 --- a/src/runtime/proc.go
 +++ b/src/runtime/proc.go
 @@ -170,7 +170,7 @@ func main() {
@@ -824,40 +1048,59 @@ index 005c875cbf180198a4aa9123288b6daca27acbdd..494a3ff5335a950eb5bdec9b257b630b
  		// A runnext goroutine shares the same time slice as the
  		// current goroutine (inheritTime from runqget). To prevent a
  		// ping-pong pair of goroutines from starving all others, we
-@@ -7487,7 +7489,7 @@ func runqput(pp *p, gp *g, next bool) {
+@@ -7487,7 +7489,10 @@ func runqput(pp *p, gp *g, next bool) {
  		// risk starvation.
  		next = false
  	}
 -	if randomizeScheduler && next && randn(2) == 0 {
 +	if next && schedulerDropRunNext(uint64(gp.goid)) {
++		next = false
++	}
++	if next && schedulerFuzzDropRunNext(uint64(gp.goid)) {
  		next = false
  	}
  
-@@ -7538,9 +7540,9 @@ func runqputslow(pp *p, gp *g, h, t uint32) bool {
+@@ -7538,9 +7543,15 @@ func runqputslow(pp *p, gp *g, h, t uint32) bool {
  	}
  	batch[n] = gp
  
 -	if randomizeScheduler {
 +	if schedulerRandomized() {
++		for i := uint32(1); i <= n; i++ {
++			j := schedulerShuffleIndexRunQPutSlow(i, uint64(batch[i].goid))
++			batch[i], batch[j] = batch[j], batch[i]
++		}
++	}
++	if detschedFuzzEnabled() {
  		for i := uint32(1); i <= n; i++ {
 -			j := cheaprandn(i + 1)
-+			j := schedulerShuffleIndexRunQPutSlow(i, uint64(batch[i].goid))
++			j := schedulerFuzzShuffleIndexRunQPutSlow(i, uint64(batch[i].goid))
  			batch[i], batch[j] = batch[j], batch[i]
  		}
  	}
-@@ -7576,12 +7578,13 @@ func runqputbatch(pp *p, q *gQueue) {
+@@ -7576,12 +7587,23 @@ func runqputbatch(pp *p, q *gQueue) {
  		n++
  	}
  
 -	if randomizeScheduler {
 +	if schedulerRandomized() {
++		off := func(o uint32) uint32 {
++			return (pp.runqtail + o) % uint32(len(pp.runq))
++		}
++		for i := uint32(1); i < n; i++ {
++			gpi := pp.runq[off(i)].ptr()
++			j := schedulerShuffleIndexRunQPutBatch(i, uint64(gpi.goid))
++			pp.runq[off(i)], pp.runq[off(j)] = pp.runq[off(j)], pp.runq[off(i)]
++		}
++	}
++	if detschedFuzzEnabled() {
  		off := func(o uint32) uint32 {
  			return (pp.runqtail + o) % uint32(len(pp.runq))
  		}
  		for i := uint32(1); i < n; i++ {
 -			j := cheaprandn(i + 1)
 +			gpi := pp.runq[off(i)].ptr()
-+			j := schedulerShuffleIndexRunQPutBatch(i, uint64(gpi.goid))
++			j := schedulerFuzzShuffleIndexRunQPutBatch(i, uint64(gpi.goid))
  			pp.runq[off(i)], pp.runq[off(j)] = pp.runq[off(j)], pp.runq[off(i)]
  		}
  	}
@@ -887,28 +1130,30 @@ index 1739e9f8f5f4eb1fb0042c4c2a967fe05745f890..c8bd9940dcfc16c9e45cdf5984ce8a58
  		// cleared by any libc initialization.
  		!allZero(startupRand[:8]) && !allZero(startupRand[8:16]) {
 diff --git a/src/runtime/runtime1.go b/src/runtime/runtime1.go
-index 965ff8ab5167d5f106ed6d153ee883c150fca4b4..2ed63c05b8ecec509ef416b8a385d44f0ec8a7c5 100644
+index 965ff8ab5167d5f106ed6d153ee883c150fca4b4..de3e0d2115af49c31d0daafc21fc1ed4fb7deb2b 100644
 --- a/src/runtime/runtime1.go
 +++ b/src/runtime/runtime1.go
-@@ -331,6 +331,8 @@ var debug struct {
+@@ -331,6 +331,9 @@ var debug struct {
  	traceCheckStackOwnership int32
  	profstackdepth           int32
  	dataindependenttiming    int32
 +	detsched                 int32
++	detschedfuzz             int32
 +	detschedseed             int32
  
  	// debug.malloc is used as a combined debug check
  	// in the malloc function and should be set
-@@ -390,6 +392,8 @@ var dbgvars = []*dbgVar{
+@@ -390,6 +393,9 @@ var dbgvars = []*dbgVar{
  	{name: "madvdontneed", value: &debug.madvdontneed},
  	{name: "panicnil", atomic: &debug.panicnil},
  	{name: "profstackdepth", value: &debug.profstackdepth, def: 128},
 +	{name: "detsched", value: &debug.detsched},
++	{name: "detschedfuzz", value: &debug.detschedfuzz},
 +	{name: "detschedseed", value: &debug.detschedseed},
  	{name: "sbrk", value: &debug.sbrk},
  	{name: "scavtrace", value: &debug.scavtrace},
  	{name: "scheddetail", value: &debug.scheddetail},
-@@ -554,6 +558,10 @@ func parsegodebug(godebug string, seen map[string]bool) {
+@@ -554,6 +560,10 @@ func parsegodebug(godebug string, seen map[string]bool) {
  	if debug.cgocheck > 1 {
  		throw("cgocheck > 1 mode is no longer supported at runtime. Use GOEXPERIMENT=cgocheck2 at build time instead.")
  	}

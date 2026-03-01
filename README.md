@@ -21,6 +21,8 @@ Then use it:
 export GOROOT="$HOME/.local/go-detsched-1.26.0"
 export PATH="$GOROOT/bin:$PATH"
 GODEBUG=detsched=1,detschedseed=12345 go run ./your_program.go
+# Deterministic scheduler fuzzer mode (seed-reproducible perturbations)
+GODEBUG=detsched=1,detschedfuzz=1,detschedseed=12345 go run ./your_program.go
 ```
 
 ## Common modes
@@ -38,7 +40,7 @@ By default, `build.sh` does:
 - apply check
 - patch apply
 - `make.bash`
-- `misc/detscheddemo/run_all_demos.sh` (seed + stress + synctest)
+- `misc/detscheddemo/run_all_demos.sh` (seed + stress + synctest + fuzz race)
 - install to `--prefix` (unless `--no-install`)
 
 The patch file is the canonical apply artifact.
@@ -79,6 +81,7 @@ This is deterministic scheduling/randomization mode, not record/replay.
 Use `GODEBUG`:
 
 - `detsched=1`
+- `detschedfuzz=1`
 - `detschedseed=<n>`
 
 Deterministic-mode defaults:
@@ -98,12 +101,12 @@ Deterministic-mode defaults:
    - deterministic salt constants
    - helper APIs for scheduler/select/random policy hooks
 2. **Debug plumbing** in `src/runtime/runtime1.go`
-   - adds `detsched` and `detschedseed`
+   - adds `detsched`, `detschedfuzz`, and `detschedseed`
 3. **Scheduler integration** in `src/runtime/proc.go`
    - init hook
    - startup `GOMAXPROCS` forcing
    - sysmon gating through detsched policy
-   - deterministic runq randomization hooks
+   - deterministic runq randomization hooks and fuzz perturbations
 4. **Select deterministic permutation** in `src/runtime/select.go`
 5. **Deterministic random roots** in `src/runtime/rand.go` and `src/runtime/alg.go`
    - stable RNG seed path
@@ -121,6 +124,7 @@ In `misc/detscheddemo`:
 - `run_seed_demo.sh`
 - `run_stress_demo.sh`
 - `run_synctest_demo.sh`
+- `run_fuzz_race_demo.sh`
 - `run_all_demos.sh`
 
 Stress demo (`stress_demo.go`) is the high-intensity integration test:
@@ -128,6 +132,15 @@ Stress demo (`stress_demo.go`) is the high-intensity integration test:
 - hundreds of goroutines
 - more than 1M `runtime.Gosched` yields in default config
 - mixed select/map/timer/alloc/GC pressure behavior in one run
+
+Fuzzer race demo (`fuzz_race_demo.go`) demonstrates seed-based interleaving exploration:
+
+- scans seed ranges to discover a failing interleaving
+- reruns that exact failing seed to prove reproducibility
+
+```bash
+misc/detscheddemo/run_fuzz_race_demo.sh 1 200
+```
 
 ### Applying patch manually
 
