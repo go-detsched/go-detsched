@@ -6,7 +6,7 @@ SEED="${SEED:-7}"
 LOG_DIR=""
 TIMEOUT_SECS="${TIMEOUT_SECS:-120}"
 SEED_START="${SEED_START:-1}"
-SEED_COUNT="${SEED_COUNT:-8}"
+SEED_COUNT="${SEED_COUNT:-12}"
 NODES="${NODES:-5}"
 ROUNDS="${ROUNDS:-6}"
 
@@ -21,7 +21,7 @@ Options:
   --go <path>        Go binary to use (default: go from PATH)
   --seed <n>         Back-compat alias for --seed-start (default: 7 if used)
   --seed-start <n>   First seed in deterministic sweep (default: 1)
-  --seed-count <n>   Number of seeds to test per scenario (default: 8)
+  --seed-count <n>   Number of seeds to test per scenario (default: 12)
   --nodes <n>        Number of Raft nodes for scenarios (default: 5)
   --rounds <n>       Proposal rounds for append scenarios (default: 6)
   --log-dir <path>   Directory for detailed logs (required)

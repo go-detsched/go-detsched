@@ -63,7 +63,7 @@ jobs:
           ./scripts/run-raft-demo-ci.sh \
             --go "$GO_DETSCHED_WORKDIR/go-src/bin/go" \
             --seed-start 1 \
-            --seed-count 8 \
+            --seed-count 12 \
             --nodes 5 \
             --rounds 6 \
             --timeout 180 \
