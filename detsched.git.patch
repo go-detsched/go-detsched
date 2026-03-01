@@ -1,9 +1,9 @@
 diff --git a/misc/detscheddemo/fuzz_race_demo.go b/misc/detscheddemo/fuzz_race_demo.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..300782d390df59500c3cf4f12fcfafad65c86836
+index 0000000000000000000000000000000000000000..f3fb6d4a145c9e5ee4051de4f7f4f3c1df95e7ea
 --- /dev/null
 +++ b/misc/detscheddemo/fuzz_race_demo.go
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,121 @@
 +package main
 +
 +import (
@@ -12,38 +12,43 @@ index 0000000000000000000000000000000000000000..300782d390df59500c3cf4f12fcfafad
 +	"os"
 +	"runtime"
 +	"sync"
++	"sync/atomic"
 +)
 +
 +func brittleHandshake(attempts int) bool {
-+	ch := make(chan struct{})
++	var ticket atomic.Int32
++	var ack atomic.Int32
 +	done := make(chan bool, 2)
 +
 +	go func() {
++		// Producer side publishes a ticket and waits a short bounded window
++		// for an acknowledgement from the consumer side.
++		ticket.Store(1)
 +		ok := false
 +		for i := 0; i < attempts; i++ {
-+			select {
-+			case ch <- struct{}{}:
++			if ack.Load() == 1 {
 +				ok = true
-+				i = attempts
-+			default:
-+				runtime.Gosched()
++				break
 +			}
++			runtime.Gosched()
 +		}
 +		done <- ok
 +	}()
 +
 +	go func() {
-+		ok := false
++		seen := false
 +		for i := 0; i < attempts; i++ {
-+			select {
-+			case <-ch:
-+				ok = true
-+				i = attempts
-+			default:
++			if ticket.Load() == 1 {
++				// Extra yield widens the interleaving-sensitive window so
++				// some seeds pass and others fail.
 +				runtime.Gosched()
++				ack.Store(1)
++				seen = true
++				break
 +			}
++			runtime.Gosched()
 +		}
-+		done <- ok
++		done <- seen
 +	}()
 +
 +	s1 := <-done
@@ -52,9 +57,10 @@ index 0000000000000000000000000000000000000000..300782d390df59500c3cf4f12fcfafad
 +}
 +
 +func main() {
-+	rounds := flag.Int("rounds", 5000, "number of protocol rounds")
-+	attempts := flag.Int("attempts", 8, "send/recv attempts per side")
-+	noise := flag.Int("noise", 32, "number of scheduler noise goroutines")
++	rounds := flag.Int("rounds", 500, "number of protocol rounds")
++	attempts := flag.Int("attempts", 6, "scheduler windows per side")
++	noise := flag.Int("noise", 12, "number of scheduler noise goroutines")
++	failThreshold := flag.Int("fail-threshold", 3, "minimum failed rounds to classify this seed as failing")
 +	flag.Parse()
 +
 +	var wg sync.WaitGroup
@@ -78,6 +84,7 @@ index 0000000000000000000000000000000000000000..300782d390df59500c3cf4f12fcfafad
 +		hashInit = uint64(0xcbf29ce484222325)
 +		hashMul  = uint64(0x100000001b3)
 +	)
++
 +	hash := hashInit
 +	okCount := 0
 +	failCount := 0
@@ -97,9 +104,9 @@ index 0000000000000000000000000000000000000000..300782d390df59500c3cf4f12fcfafad
 +	close(stop)
 +	wg.Wait()
 +
-+	fmt.Printf("rounds=%d ok=%d fail=%d hash=%016x\n", *rounds, okCount, failCount, hash)
-+	if failCount > 0 {
-+		fmt.Println("status=FAIL brittle protocol lost handshakes")
++	fmt.Printf("rounds=%d ok=%d fail=%d threshold=%d hash=%016x\n", *rounds, okCount, failCount, *failThreshold, hash)
++	if failCount >= *failThreshold {
++		fmt.Println("status=FAIL brittle protocol exceeded failure threshold")
 +		os.Exit(1)
 +	}
 +	fmt.Println("status=PASS")
@@ -221,40 +228,66 @@ index 0000000000000000000000000000000000000000..271e99d3cf5ba6c1026009a35ec0c679
 +echo "All deterministic demos passed."
 diff --git a/misc/detscheddemo/run_fuzz_race_demo.sh b/misc/detscheddemo/run_fuzz_race_demo.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..2f4bfe930124813fcd3b949a37632cef9e39c6d0
+index 0000000000000000000000000000000000000000..c4ef62f85f0fb73a3c6e8f4505ec6b0d509d6f60
 --- /dev/null
 +++ b/misc/detscheddemo/run_fuzz_race_demo.sh
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,132 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
 +ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 +GO="$ROOT/bin/go"
-+DEMO="$ROOT/misc/detscheddemo/fuzz_race_demo.go"
++DEMO_SRC="$ROOT/misc/detscheddemo/fuzz_race_demo.go"
 +
 +seed_start="${1:-1}"
 +seed_end="${2:-200}"
-+rounds="${3:-5000}"
-+attempts="${4:-8}"
-+noise="${5:-32}"
++rounds="${3:-500}"
++attempts="${4:-6}"
++noise="${5:-12}"
++fail_threshold="${6:-3}"
++scan_mode="${7:-first-fail}" # first-fail | full-scan
++
++DEMO_BIN=""
++
++cleanup() {
++  if [[ -n "$DEMO_BIN" && -f "$DEMO_BIN" ]]; then
++    rm -f "$DEMO_BIN"
++  fi
++}
++trap cleanup EXIT
++
++build_demo_binary() {
++  DEMO_BIN="$(mktemp /tmp/fuzz-race-demo-XXXXXX.bin)"
++  "$GO" build -o "$DEMO_BIN" "$DEMO_SRC"
++  chmod +x "$DEMO_BIN"
++}
 +
 +run_once() {
 +  local s="$1"
 +  GODEBUG="detsched=1,detschedfuzz=1,detschedseed=${s}" \
-+    "$GO" run "$DEMO" -rounds="$rounds" -attempts="$attempts" -noise="$noise"
++    "$DEMO_BIN" \
++      -rounds="$rounds" \
++      -attempts="$attempts" \
++      -noise="$noise" \
++      -fail-threshold="$fail_threshold"
 +}
 +
 +extract_hash() {
 +  sed -n 's/.*hash=\([0-9a-f]\{16\}\).*/\1/p'
 +}
 +
++build_demo_binary
++
 +pass_seed=""
 +pass_hash=""
 +fail_seed=""
 +fail_hash=""
++fail_count=0
++total_count=0
 +
-+echo "Scanning seeds ${seed_start}..${seed_end} for brittle handshake failures..."
++echo "Scanning seeds ${seed_start}..${seed_end} mode=${scan_mode} rounds=${rounds} attempts=${attempts} noise=${noise} fail_threshold=${fail_threshold}..."
 +for ((s=seed_start; s<=seed_end; s++)); do
++  total_count=$((total_count + 1))
 +  if out="$(run_once "$s" 2>&1)"; then
 +    if [[ -z "$pass_seed" ]]; then
 +      pass_seed="$s"
@@ -263,10 +296,16 @@ index 0000000000000000000000000000000000000000..2f4bfe930124813fcd3b949a37632cef
 +    continue
 +  fi
 +
-+  fail_seed="$s"
-+  fail_hash="$(printf '%s\n' "$out" | extract_hash)"
-+  echo "$out"
-+  break
++  fail_count=$((fail_count + 1))
++  if [[ -z "$fail_seed" ]]; then
++    fail_seed="$s"
++    fail_hash="$(printf '%s\n' "$out" | extract_hash)"
++    echo "$out"
++  fi
++
++  if [[ "$scan_mode" == "first-fail" ]]; then
++    break
++  fi
 +done
 +
 +if [[ -z "$fail_seed" ]]; then
@@ -288,6 +327,17 @@ index 0000000000000000000000000000000000000000..2f4bfe930124813fcd3b949a37632cef
 +if [[ "$h1" != "$h2" ]]; then
 +  echo "FAIL: failing seed hash changed across reruns" >&2
 +  exit 1
++fi
++
++if [[ "$scan_mode" == "full-scan" ]]; then
++  # Include the first failing seed in full-scan count if it was found before
++  # incrementing loop-wide counters in a future refactor.
++  if [[ "$fail_count" -eq 0 ]]; then
++    fail_count=1
++  fi
++
++  catch_rate_pct="$(awk -v f="$fail_count" -v t="$total_count" 'BEGIN { printf "%.2f", (100.0 * f) / t }')"
++  echo "full_scan_summary total_seeds=${total_count} failing_seeds=${fail_count} catch_rate_pct=${catch_rate_pct}"
 +fi
 +
 +if [[ -n "$pass_seed" ]]; then

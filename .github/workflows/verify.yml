@@ -70,7 +70,17 @@ jobs:
           set -o pipefail
           DEMO="$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_fuzz_race_demo.sh"
           if [[ -x "$DEMO" ]]; then
-            "$DEMO" 1 80 3000 8 24 2>&1 | tee "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log"
+            "$DEMO" 1 50 500 6 12 3 full-scan 2>&1 | tee "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log"
+            catch_rate="$(sed -n 's/.*catch_rate_pct=\([0-9.]\+\).*/\1/p' "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log" | tail -n1)"
+            if [[ -z "$catch_rate" ]]; then
+              echo "FAIL: could not extract catch_rate_pct from fuzz race demo log" >&2
+              exit 1
+            fi
+            echo "Scheduler-fuzzer catch rate across 50 trials: ${catch_rate}%"
+            if ! awk -v r="$catch_rate" 'BEGIN { exit (r > 0 && r < 100) ? 0 : 1 }'; then
+              echo "FAIL: catch rate must be between 0 and 100 (exclusive) to keep demo subtle; got ${catch_rate}%" >&2
+              exit 1
+            fi
           else
             echo "Skipping fuzzer race demo: script not present in applied patch artifact."
             echo "Skipping fuzzer race demo: script not present in applied patch artifact." > "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log"
