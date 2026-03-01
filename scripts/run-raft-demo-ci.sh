@@ -83,18 +83,36 @@ echo "timeout_sec=${TIMEOUT_SECS}"
 warm_modules
 
 OUT_FILE="${LOG_DIR}/raftsim_synctest.log"
+TEST_BIN="${LOG_DIR}/raftsim_scenarios.test"
+
+# Compile test binary once up front, then execute under detsched.
+set +e
+(
+  cd "$DEMO_DIR"
+  env \
+    GOMODCACHE="${CACHE_ROOT}/mod" \
+    GOCACHE="${CACHE_ROOT}/build" \
+    "$GO_BIN" test -c ./internal/scenarios -o "$TEST_BIN"
+) > "${LOG_DIR}/raftsim_test_build.log" 2>&1
+status=$?
+set -e
+if [[ "$status" -ne 0 ]]; then
+  echo "failed to compile raft synctest binary (status=${status})" >&2
+  echo "---- recent ${LOG_DIR}/raftsim_test_build.log ----" >&2
+  rg -n "." "${LOG_DIR}/raftsim_test_build.log" -m 80 >&2 || true
+  exit "$status"
+fi
+
 set +e
 (
   cd "$DEMO_DIR"
   timeout "${TIMEOUT_SECS}s" env \
-    GODEBUG="" \
-    GOMODCACHE="${CACHE_ROOT}/mod" \
-    GOCACHE="${CACHE_ROOT}/build" \
+    GODEBUG="detsched=1,detschedseed=1" \
     RAFTSIM_SEED_START="${SEED_START}" \
     RAFTSIM_SEED_COUNT="${SEED_COUNT}" \
     RAFTSIM_NODES=5 \
     RAFTSIM_ROUNDS=4 \
-    "$GO_BIN" test ./internal/scenarios -count=1 -v -run TestSynctestDeterministicRepro
+    "$TEST_BIN" -test.v -test.run TestSynctestDeterministicRepro
 ) > "$OUT_FILE" 2>&1
 status=$?
 set -e
