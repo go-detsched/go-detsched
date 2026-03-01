@@ -62,7 +62,9 @@ jobs:
           chmod +x scripts/*.sh
           ./scripts/run-raft-demo-ci.sh \
             --go "$GO_DETSCHED_WORKDIR/go-src/bin/go" \
-            --seed 7 \
+            --seed-start 1 \
+            --seed-count 3 \
+            --timeout 120 \
             --log-dir "$GO_DETSCHED_LOG_DIR" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/raft_demo_ci.log"
 
       - name: Finalize CI log bundle

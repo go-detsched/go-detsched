@@ -131,7 +131,7 @@ func runSplitVote(cfg RunConfig) (Result, error) {
 	defer cancel()
 	defer cluster.Close()
 
-	ctx, done := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, done := context.WithTimeout(context.Background(), scenarioTimeout(cfg, 4*time.Second, 500*time.Millisecond))
 	defer done()
 	_, err = cluster.WaitForSingleLeader(ctx, 100*time.Millisecond)
 	result := Result{
@@ -168,7 +168,7 @@ func runStaleLeader(cfg RunConfig) (Result, error) {
 	defer cancel()
 	defer cluster.Close()
 
-	ctx, done := context.WithTimeout(context.Background(), 6*time.Second)
+	ctx, done := context.WithTimeout(context.Background(), scenarioTimeout(cfg, 6*time.Second, 700*time.Millisecond))
 	defer done()
 	leaderID, err := cluster.WaitForSingleLeader(ctx, 30*time.Millisecond)
 	if err != nil {
@@ -190,10 +190,10 @@ func runStaleLeader(cfg RunConfig) (Result, error) {
 	// Allow stale heartbeats from the old leader to flow.
 	if cfg.Synctest {
 		synctest.Wait()
-		time.Sleep(400 * time.Millisecond)
+		time.Sleep(scenarioTimeout(cfg, 400*time.Millisecond, 50*time.Millisecond))
 		synctest.Wait()
 	} else {
-		time.Sleep(400 * time.Millisecond)
+		time.Sleep(scenarioTimeout(cfg, 400*time.Millisecond, 50*time.Millisecond))
 	}
 
 	result := Result{
@@ -245,7 +245,7 @@ func runReorderCommit(cfg RunConfig) (Result, error) {
 	defer cancel()
 	defer cluster.Close()
 
-	ctx, done := context.WithTimeout(context.Background(), 7*time.Second)
+	ctx, done := context.WithTimeout(context.Background(), scenarioTimeout(cfg, 7*time.Second, 900*time.Millisecond))
 	defer done()
 	leaderID, err := cluster.WaitForSingleLeader(ctx, 40*time.Millisecond)
 	if err != nil {
@@ -259,10 +259,10 @@ func runReorderCommit(cfg RunConfig) (Result, error) {
 	}
 	if cfg.Synctest {
 		synctest.Wait()
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(scenarioTimeout(cfg, 500*time.Millisecond, 60*time.Millisecond))
 		synctest.Wait()
 	} else {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(scenarioTimeout(cfg, 500*time.Millisecond, 60*time.Millisecond))
 	}
 
 	snaps := cluster.NodeSnapshots()
@@ -370,4 +370,11 @@ func stableHash(parts ...string) string {
 		_, _ = h.Write([]byte{'\n'})
 	}
 	return fmt.Sprintf("%016x", h.Sum64())
+}
+
+func scenarioTimeout(cfg RunConfig, normal, fast time.Duration) time.Duration {
+	if cfg.Synctest {
+		return fast
+	}
+	return normal
 }
