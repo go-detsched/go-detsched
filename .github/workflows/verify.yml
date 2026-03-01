@@ -9,7 +9,7 @@ on:
 
 jobs:
   verify-go-1-26:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     env:
       GO_DETSCHED_WORKDIR: ${{ github.workspace }}/.go-detsched-work
     steps:
@@ -38,3 +38,7 @@ jobs:
       - name: Run synctest demo
         run: |
           "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_synctest_demo.sh" 12345 99999
+
+      - name: Run scheduler fuzzer race demo
+        run: |
+          "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_fuzz_race_demo.sh" 1 80 3000 8 24
