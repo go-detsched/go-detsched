@@ -62,10 +62,15 @@ func run(workers, iters int) uint64 {
 	}
 
 	close(start)
-	hash := uint64(0xcbf29ce484222325)
+	results := make([]uint64, workers)
 	for i := 0; i < workers; i++ {
 		r := <-out
-		hash ^= mix(r.v ^ r.id*0x100000001b3)
+		results[r.id-1] = r.v
+	}
+
+	hash := uint64(0xcbf29ce484222325)
+	for i, v := range results {
+		hash ^= mix(v ^ uint64(i+1)*0x100000001b3)
 		hash = (hash << 13) | (hash >> 51)
 	}
 	return hash
