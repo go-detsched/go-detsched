@@ -231,7 +231,7 @@ new file mode 100755
 index 0000000000000000000000000000000000000000..c4ef62f85f0fb73a3c6e8f4505ec6b0d509d6f60
 --- /dev/null
 +++ b/misc/detscheddemo/run_fuzz_race_demo.sh
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,111 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
@@ -308,9 +308,18 @@ index 0000000000000000000000000000000000000000..c4ef62f85f0fb73a3c6e8f4505ec6b0d
 +  fi
 +done
 +
++if [[ "$scan_mode" == "full-scan" ]]; then
++  catch_rate_pct="$(awk -v f="$fail_count" -v t="$total_count" 'BEGIN { printf "%.2f", (100.0 * f) / t }')"
++  echo "full_scan_summary total_seeds=${total_count} failing_seeds=${fail_count} catch_rate_pct=${catch_rate_pct}"
++fi
++
 +if [[ -z "$fail_seed" ]]; then
-+  echo "FAIL: no failing seed found in scan window" >&2
-+  exit 1
++  if [[ "$scan_mode" == "first-fail" ]]; then
++    echo "FAIL: no failing seed found in scan window" >&2
++    exit 1
++  fi
++  echo "No failing seed found in full-scan window."
++  exit 0
 +fi
 +
 +echo "Found failing seed=${fail_seed} hash=${fail_hash}"
@@ -327,17 +336,6 @@ index 0000000000000000000000000000000000000000..c4ef62f85f0fb73a3c6e8f4505ec6b0d
 +if [[ "$h1" != "$h2" ]]; then
 +  echo "FAIL: failing seed hash changed across reruns" >&2
 +  exit 1
-+fi
-+
-+if [[ "$scan_mode" == "full-scan" ]]; then
-+  # Include the first failing seed in full-scan count if it was found before
-+  # incrementing loop-wide counters in a future refactor.
-+  if [[ "$fail_count" -eq 0 ]]; then
-+    fail_count=1
-+  fi
-+
-+  catch_rate_pct="$(awk -v f="$fail_count" -v t="$total_count" 'BEGIN { printf "%.2f", (100.0 * f) / t }')"
-+  echo "full_scan_summary total_seeds=${total_count} failing_seeds=${fail_count} catch_rate_pct=${catch_rate_pct}"
 +fi
 +
 +if [[ -n "$pass_seed" ]]; then

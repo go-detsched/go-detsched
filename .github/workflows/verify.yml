@@ -70,7 +70,7 @@ jobs:
           set -o pipefail
           DEMO="$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_fuzz_race_demo.sh"
           if [[ -x "$DEMO" ]]; then
-            "$DEMO" 1 50 500 6 12 3 full-scan 2>&1 | tee "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log"
+            "$DEMO" 1 50 500 3 24 1 full-scan 2>&1 | tee "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log"
             catch_rate="$(sed -n 's/.*catch_rate_pct=\([0-9.]\+\).*/\1/p' "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log" | tail -n1)"
             if [[ -z "$catch_rate" ]]; then
               echo "FAIL: could not extract catch_rate_pct from fuzz race demo log" >&2
