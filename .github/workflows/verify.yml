@@ -56,6 +56,15 @@ jobs:
           set -o pipefail
           ./scripts/run-tests.sh --go "$GO_DETSCHED_WORKDIR/go-src/bin/go" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/patch_tests.log"
 
+      - name: Run deterministic Raft demo checks
+        run: |
+          set -o pipefail
+          chmod +x scripts/*.sh
+          ./scripts/run-raft-demo-ci.sh \
+            --go "$GO_DETSCHED_WORKDIR/go-src/bin/go" \
+            --seed 7 \
+            --log-dir "$GO_DETSCHED_LOG_DIR" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/raft_demo_ci.log"
+
       - name: Finalize CI log bundle
         if: always()
         run: |

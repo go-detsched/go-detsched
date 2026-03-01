@@ -22,3 +22,16 @@ Run fuzzer-style interleaving demo:
 ```bash
 GODEBUG=detsched=1,detschedfuzz=1,detschedseed=7 "$GO_BIN" run ./tests/cmd/fuzzprobe/main.go
 ```
+
+Run deterministic Raft simulation demo:
+
+```bash
+cd demos/raftsim
+GODEBUG=detsched=1,detschedseed=7 "$GO_BIN" run ./cmd/raftsim --scenario all --nodes 5 --rounds 4
+```
+
+Run deterministic Raft CI-style checks (same-seed replay + issue assertions):
+
+```bash
+./scripts/run-raft-demo-ci.sh --go "$GO_BIN" --seed 7 --log-dir ./ci-logs
+```

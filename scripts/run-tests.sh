@@ -4,6 +4,7 @@ set -euo pipefail
 GO_BIN="go"
 SEED_A="${SEED_A:-12345}"
 SEED_B="${SEED_B:-99999}"
+WITH_RAFT_DEMO=0
 
 usage() {
   cat <<'EOF'
@@ -13,6 +14,8 @@ Runs concise patch verification tests using a selected Go binary.
 
 Options:
   --go <path>    Go binary to use (default: go from PATH)
+  --with-raft-demo
+                 Also run the deterministic Raft simulation demo
   -h, --help     Show help
 EOF
 }
@@ -20,6 +23,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --go) GO_BIN="$2"; shift 2 ;;
+    --with-raft-demo) WITH_RAFT_DEMO=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -96,6 +100,15 @@ echo "fuzz_scan_summary seeds=40 pass=${pass_count} fail=${fail_count}"
 if [[ "$pass_count" -eq 0 || "$fail_count" -eq 0 ]]; then
   echo "FAIL: expected both passing and failing seeds in fuzz mode" >&2
   exit 1
+fi
+
+if [[ "$WITH_RAFT_DEMO" -eq 1 ]]; then
+  echo "[5/5] deterministic raft demo"
+  (
+    cd "${REPO_ROOT}/demos/raftsim"
+    GODEBUG="detsched=1,detschedseed=${SEED_A}" \
+      "$GO_BIN" run ./cmd/raftsim --scenario all --nodes 5 --rounds 4
+  )
 fi
 
 echo "All patch verification tests passed."
