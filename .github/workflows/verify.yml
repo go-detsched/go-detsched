@@ -76,10 +76,24 @@ jobs:
             echo "Skipping fuzzer race demo: script not present in applied patch artifact." > "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log"
           fi
 
+      - name: Finalize CI log bundle
+        if: always()
+        run: |
+          mkdir -p "$GO_DETSCHED_LOG_DIR"
+          {
+            echo "run_id=${GITHUB_RUN_ID:-unknown}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT:-unknown}"
+            echo "job=${GITHUB_JOB:-unknown}"
+            echo "sha=${GITHUB_SHA:-unknown}"
+            echo "ref=${GITHUB_REF:-unknown}"
+            echo "completed_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$GO_DETSCHED_LOG_DIR/run_metadata.log"
+          ls -la "$GO_DETSCHED_LOG_DIR" > "$GO_DETSCHED_LOG_DIR/index.log"
+
       - name: Upload CI logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: detsched-verify-logs-${{ github.run_id }}
           path: ${{ env.GO_DETSCHED_LOG_DIR }}
-          if-no-files-found: error
+          if-no-files-found: warn
