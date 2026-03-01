@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..f3fb6d4a145c9e5ee4051de4f7f4f3c1df95e7ea
 --- /dev/null
 +++ b/misc/detscheddemo/fuzz_race_demo.go
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,103 @@
 +package main
 +
 +import (
@@ -12,43 +12,39 @@ index 0000000000000000000000000000000000000000..f3fb6d4a145c9e5ee4051de4f7f4f3c1
 +	"os"
 +	"runtime"
 +	"sync"
-+	"sync/atomic"
 +)
 +
 +func brittleHandshake(attempts int) bool {
-+	var ticket atomic.Int32
-+	var ack atomic.Int32
++	ch := make(chan struct{})
++	abort := make(chan struct{})
 +	done := make(chan bool, 2)
 +
 +	go func() {
-+		// Producer side publishes a ticket and waits a short bounded window
-+		// for an acknowledgement from the consumer side.
-+		ticket.Store(1)
-+		ok := false
 +		for i := 0; i < attempts; i++ {
-+			if ack.Load() == 1 {
-+				ok = true
-+				break
-+			}
 +			runtime.Gosched()
++		}
++		ok := false
++		select {
++		case <-ch:
++			ok = true
++		case <-abort:
 +		}
 +		done <- ok
 +	}()
 +
 +	go func() {
-+		seen := false
++		ok := false
 +		for i := 0; i < attempts; i++ {
-+			if ticket.Load() == 1 {
-+				// Extra yield widens the interleaving-sensitive window so
-+				// some seeds pass and others fail.
++			select {
++			case ch <- struct{}{}:
++				ok = true
++				i = attempts
++			default:
 +				runtime.Gosched()
-+				ack.Store(1)
-+				seen = true
-+				break
 +			}
-+			runtime.Gosched()
 +		}
-+		done <- seen
++		close(abort)
++		done <- ok
 +	}()
 +
 +	s1 := <-done
