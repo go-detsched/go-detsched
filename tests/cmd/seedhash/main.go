@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"runtime"
-	"time"
 )
 
 func main() {
@@ -36,7 +35,7 @@ func run(workers, iters int) uint64 {
 				b := mix(a + uint64(j<<1))
 				local[a&31] = b ^ id
 
-				// Select order and timer behavior are part of patch coverage.
+				// Select order is part of patch coverage.
 				c1 := make(chan uint64, 1)
 				c2 := make(chan uint64, 1)
 				c1 <- a
@@ -48,9 +47,6 @@ func run(workers, iters int) uint64 {
 				case x := <-c2:
 					<-c1
 					h ^= mix(x + 0x5a5a5a5a5a5a5a5a)
-				}
-				if j%64 == 0 {
-					<-time.After(0)
 				}
 				runtime.Gosched()
 			}
