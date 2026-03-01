@@ -151,10 +151,10 @@ index ea4d3a8cb0bb33495ef6a104a7860ee7f88a8655..13d1c108778e48ef5808152e3b52d55d
  		hz = 0
 diff --git a/src/runtime/detsched.go b/src/runtime/detsched.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..7f1daa85ea1ec50a9d285da9c808c41d46d874e9
+index 0000000000000000000000000000000000000000..bbf992407478e03ce58ba0882b88980d52da5dc4
 --- /dev/null
 +++ b/src/runtime/detsched.go
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,201 @@
 +// Copyright 2026 The Go Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style
 +// license that can be found in the LICENSE file.
@@ -305,10 +305,6 @@ index 0000000000000000000000000000000000000000..7f1daa85ea1ec50a9d285da9c808c41d
 +}
 +
 +func schedulerSelectPermuteIndex(i, norder int) uint32 {
-+	if detschedEnabled() && !detschedFuzzEnabled() {
-+		// Keep a stable select poll order in strict deterministic mode.
-+		return uint32(i)
-+	}
 +	salt := detschedSaltSelect ^ uint64(i) ^ uint64(norder)
 +	if detschedFuzzEnabled() {
 +		salt ^= detschedFuzzSalt(detschedSaltFuzzSelect)

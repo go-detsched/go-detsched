@@ -148,10 +148,6 @@ func schedulerFuzzShuffleIndexRunQPutBatch(i uint32, goid uint64) uint32 {
 }
 
 func schedulerSelectPermuteIndex(i, norder int) uint32 {
-	if detschedEnabled() && !detschedFuzzEnabled() {
-		// Keep a stable select poll order in strict deterministic mode.
-		return uint32(i)
-	}
 	salt := detschedSaltSelect ^ uint64(i) ^ uint64(norder)
 	if detschedFuzzEnabled() {
 		salt ^= detschedFuzzSalt(detschedSaltFuzzSelect)
