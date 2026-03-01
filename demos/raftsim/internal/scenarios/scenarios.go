@@ -25,6 +25,7 @@ type RunConfig struct {
 	Nodes    int
 	Rounds   int
 	Verbose  bool
+	Synctest bool
 }
 
 type Result struct {
@@ -50,19 +51,21 @@ func Run(cfg RunConfig) (Result, error) {
 		cfg.Seed = 1
 	}
 
-	var (
-		result Result
-		runErr error
-	)
-
-	err := runInSynctest(func() {
-		result, runErr = runOne(cfg)
-		synctest.Wait()
-	})
-	if err != nil {
-		return Result{}, err
+	if cfg.Synctest {
+		var (
+			result Result
+			runErr error
+		)
+		err := runInSynctest(func() {
+			result, runErr = runOne(cfg)
+			synctest.Wait()
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		return result, runErr
 	}
-	return result, runErr
+	return runOne(cfg)
 }
 
 func ScenarioNames() []string {
@@ -159,9 +162,13 @@ func runStaleLeader(cfg RunConfig) (Result, error) {
 	_ = cluster.BumpNodeTerm(bumpTarget, cluster.MaxTerm()+1)
 
 	// Allow stale heartbeats from the old leader to flow.
-	synctest.Wait()
-	time.Sleep(400 * time.Millisecond)
-	synctest.Wait()
+	if cfg.Synctest {
+		synctest.Wait()
+		time.Sleep(400 * time.Millisecond)
+		synctest.Wait()
+	} else {
+		time.Sleep(400 * time.Millisecond)
+	}
 
 	result := Result{
 		Scenario: ScenarioStaleLeader,
@@ -224,9 +231,13 @@ func runReorderCommit(cfg RunConfig) (Result, error) {
 			// Keep trying rounds; occasional failures are expected in this fault mode.
 		}
 	}
-	synctest.Wait()
-	time.Sleep(500 * time.Millisecond)
-	synctest.Wait()
+	if cfg.Synctest {
+		synctest.Wait()
+		time.Sleep(500 * time.Millisecond)
+		synctest.Wait()
+	} else {
+		time.Sleep(500 * time.Millisecond)
+	}
 
 	snaps := cluster.NodeSnapshots()
 	highestCommit := 0

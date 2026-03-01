@@ -15,6 +15,7 @@ func main() {
 	nodes := flag.Int("nodes", 5, "number of raft nodes")
 	rounds := flag.Int("rounds", 3, "proposal rounds for append scenarios")
 	verbose := flag.Bool("verbose", false, "print detailed event log")
+	useSynctest := flag.Bool("synctest", true, "run scenarios inside testing/synctest bubble")
 	flag.Parse()
 
 	names, err := resolveScenarios(*scenario)
@@ -31,6 +32,7 @@ func main() {
 			Nodes:    *nodes,
 			Rounds:   *rounds,
 			Verbose:  *verbose,
+			Synctest: *useSynctest,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "scenario=%s seed=%d status=error err=%v\n", name, *seed, err)

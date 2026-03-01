@@ -63,6 +63,7 @@ run_one() {
         --seed "$SEED" \
         --nodes 5 \
         --rounds 4 \
+        --synctest=false \
         --verbose
   ) > "$out_file" 2>&1
   local status=$?

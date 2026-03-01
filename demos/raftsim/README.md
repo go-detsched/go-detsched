@@ -50,9 +50,11 @@ scenario=stale_leader seed=7 status=PASS bug_observed=true issue=RAFT_STALE_LEAD
 
 ## Why `synctest`
 
-Scenario runs are wrapped in `testing/synctest`, so simulated time jumps forward
+By default, scenario runs are wrapped in `testing/synctest`, so simulated time jumps forward
 as soon as all goroutines are blocked on timers/channels. This keeps the demo
 fast while still exercising timer-heavy election logic.
+
+If needed, you can disable it via `--synctest=false`.
 
 ## Using Binary Releases / CI Outputs
 
@@ -72,6 +74,10 @@ CI uses `scripts/run-raft-demo-ci.sh` with the patched toolchain to:
 1. run each scenario twice with the same seed,
 2. assert the expected bug issue code is observed, and
 3. assert the summary output is byte-identical across reruns.
+
+CI currently runs with `--synctest=false` for the `bufconn` transport path to avoid
+indefinite blocking in workflow environments while still validating deterministic
+bug reproduction against the patched toolchain.
 
 Example local invocation against a patched binary:
 
