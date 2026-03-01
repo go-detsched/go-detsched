@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..f3fb6d4a145c9e5ee4051de4f7f4f3c1df95e7ea
 --- /dev/null
 +++ b/misc/detscheddemo/fuzz_race_demo.go
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,107 @@
 +package main
 +
 +import (
@@ -231,7 +231,7 @@ new file mode 100755
 index 0000000000000000000000000000000000000000..c4ef62f85f0fb73a3c6e8f4505ec6b0d509d6f60
 --- /dev/null
 +++ b/misc/detscheddemo/run_fuzz_race_demo.sh
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,113 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
