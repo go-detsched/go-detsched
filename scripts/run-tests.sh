@@ -27,14 +27,29 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SEEDHASH_BIN=""
+
+cleanup() {
+  if [[ -n "$SEEDHASH_BIN" && -f "$SEEDHASH_BIN" ]]; then
+    rm -f "$SEEDHASH_BIN"
+  fi
+}
+trap cleanup EXIT
+
+build_seedhash_binary() {
+  SEEDHASH_BIN="$(mktemp /tmp/detsched-seedhash-XXXXXX.bin)"
+  "$GO_BIN" build -o "$SEEDHASH_BIN" "${REPO_ROOT}/tests/cmd/seedhash/main.go"
+  chmod +x "$SEEDHASH_BIN"
+}
 
 run_seedhash() {
   local seed="$1"
   GODEBUG="detsched=1,detschedseed=${seed}" \
-    "$GO_BIN" run "${REPO_ROOT}/tests/cmd/seedhash/main.go" -workers=64 -iters=2000 -procs=1
+    "$SEEDHASH_BIN" -workers=64 -iters=2000 -procs=1
 }
 
 echo "[1/4] seed reproducibility"
+build_seedhash_binary
 h1="$(run_seedhash "$SEED_A")"
 h2="$(run_seedhash "$SEED_A")"
 if [[ "$h1" != "$h2" ]]; then
