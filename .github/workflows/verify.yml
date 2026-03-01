@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 45
     env:
       GO_DETSCHED_WORKDIR: ${{ github.workspace }}/.go-detsched-work
-      GO_DETSCHED_LOG_DIR: ${{ runner.temp }}/detsched-logs
+      GO_DETSCHED_LOG_DIR: ${{ github.workspace }}/.ci-logs
     steps:
       - name: Checkout
         uses: actions/checkout@v4
