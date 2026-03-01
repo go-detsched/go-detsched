@@ -68,19 +68,38 @@ func TestSynctestDeterministicRepro(t *testing.T) {
 						r2.Evidence,
 					)
 				}
+
 				t.Logf(
-					"scenario=%s seed=%d status=%s bug_observed=%t issue=%s hash=%s reason=%q evidence=%q run1_us=%d run2_us=%d total_us=%d",
+					"scenario=%s seed=%d run_index=1 run_us=%d status=%s bug_observed=%t issue=%s hash=%s",
 					r1.Scenario,
 					r1.Seed,
+					run1Dur.Microseconds(),
+					statusString(r1.Passed),
+					r1.BugObserved,
+					r1.IssueCode,
+					r1.EventHash,
+				)
+				t.Logf(
+					"scenario=%s seed=%d run_index=2 run_us=%d status=%s bug_observed=%t issue=%s hash=%s",
+					r2.Scenario,
+					r2.Seed,
+					run2Dur.Microseconds(),
+					statusString(r2.Passed),
+					r2.BugObserved,
+					r2.IssueCode,
+					r2.EventHash,
+				)
+				t.Logf(
+					"scenario=%s seed=%d summary_us=%d status=%s bug_observed=%t issue=%s hash=%s reason=%q evidence=%q",
+					r1.Scenario,
+					r1.Seed,
+					seedDur.Microseconds(),
 					statusString(r1.Passed),
 					r1.BugObserved,
 					r1.IssueCode,
 					r1.EventHash,
 					r1.Reason,
 					r1.Evidence,
-					run1Dur.Microseconds(),
-					run2Dur.Microseconds(),
-					seedDur.Microseconds(),
 				)
 			})
 		}
