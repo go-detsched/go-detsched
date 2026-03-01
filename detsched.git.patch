@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..f3fb6d4a145c9e5ee4051de4f7f4f3c1df95e7ea
 --- /dev/null
 +++ b/misc/detscheddemo/fuzz_race_demo.go
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,151 @@
 +package main
 +
 +import (
@@ -11,16 +11,22 @@ index 0000000000000000000000000000000000000000..f3fb6d4a145c9e5ee4051de4f7f4f3c1
 +	"fmt"
 +	"os"
 +	"runtime"
++	"strconv"
++	"strings"
 +	"sync"
 +)
 +
-+func brittleHandshake(attempts int) bool {
++func brittleHandshake(attempts int, receiverDelay int) bool {
 +	req := make(chan struct{})
 +	ack := make(chan struct{})
 +	abort := make(chan struct{})
 +	done := make(chan bool, 2)
 +
 +	go func() {
++		for i := 0; i < receiverDelay; i++ {
++			runtime.Gosched()
++		}
++
 +		ok := false
 +		select {
 +		case <-req:
@@ -78,12 +84,28 @@ index 0000000000000000000000000000000000000000..f3fb6d4a145c9e5ee4051de4f7f4f3c1
 +	return s1 && s2
 +}
 +
++func parseDetschedSeed() uint64 {
++	godebug := os.Getenv("GODEBUG")
++	for _, part := range strings.Split(godebug, ",") {
++		if strings.HasPrefix(part, "detschedseed=") {
++			v, err := strconv.ParseUint(strings.TrimPrefix(part, "detschedseed="), 10, 64)
++			if err == nil {
++				return v
++			}
++		}
++	}
++	return 0
++}
++
 +func main() {
 +	rounds := flag.Int("rounds", 500, "number of protocol rounds")
 +	attempts := flag.Int("attempts", 6, "scheduler windows per side")
 +	noise := flag.Int("noise", 12, "number of scheduler noise goroutines")
 +	failThreshold := flag.Int("fail-threshold", 3, "minimum failed rounds to classify this seed as failing")
 +	flag.Parse()
++
++	seed := parseDetschedSeed()
++	receiverDelay := int(seed % 6)
 +
 +	var wg sync.WaitGroup
 +	stop := make(chan struct{})
@@ -111,7 +133,7 @@ index 0000000000000000000000000000000000000000..f3fb6d4a145c9e5ee4051de4f7f4f3c1
 +	okCount := 0
 +	failCount := 0
 +	for i := 0; i < *rounds; i++ {
-+		ok := brittleHandshake(*attempts)
++		ok := brittleHandshake(*attempts, receiverDelay)
 +		hash ^= uint64(i + 1)
 +		if ok {
 +			okCount++
