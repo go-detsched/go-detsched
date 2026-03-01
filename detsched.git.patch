@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..f3fb6d4a145c9e5ee4051de4f7f4f3c1df95e7ea
 --- /dev/null
 +++ b/misc/detscheddemo/fuzz_race_demo.go
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,129 @@
 +package main
 +
 +import (
@@ -15,34 +15,60 @@ index 0000000000000000000000000000000000000000..f3fb6d4a145c9e5ee4051de4f7f4f3c1
 +)
 +
 +func brittleHandshake(attempts int) bool {
-+	ch := make(chan struct{})
++	req := make(chan struct{})
++	ack := make(chan struct{})
 +	abort := make(chan struct{})
 +	done := make(chan bool, 2)
 +
 +	go func() {
-+		for i := 0; i < attempts; i++ {
-+			runtime.Gosched()
-+		}
 +		ok := false
 +		select {
-+		case <-ch:
++		case <-req:
 +			ok = true
 +		case <-abort:
++		}
++		if !ok {
++			done <- false
++			return
++		}
++
++		select {
++		case ack <- struct{}{}:
++			ok = true
++		case <-abort:
++			ok = false
 +		}
 +		done <- ok
 +	}()
 +
 +	go func() {
++		sent := false
++		for i := 0; i < attempts; i++ {
++			select {
++			case req <- struct{}{}:
++				sent = true
++				i = attempts
++			default:
++				runtime.Gosched()
++			}
++		}
++		if !sent {
++			close(abort)
++			done <- false
++			return
++		}
++
 +		ok := false
 +		for i := 0; i < attempts; i++ {
 +			select {
-+			case ch <- struct{}{}:
++			case <-ack:
 +				ok = true
 +				i = attempts
 +			default:
 +				runtime.Gosched()
 +			}
 +		}
++
 +		close(abort)
 +		done <- ok
 +	}()
