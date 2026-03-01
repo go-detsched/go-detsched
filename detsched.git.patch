@@ -151,10 +151,10 @@ index ea4d3a8cb0bb33495ef6a104a7860ee7f88a8655..13d1c108778e48ef5808152e3b52d55d
  		hz = 0
 diff --git a/src/runtime/detsched.go b/src/runtime/detsched.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..bbf992407478e03ce58ba0882b88980d52da5dc4
+index 0000000000000000000000000000000000000000..d5bc8edfadaecd84749f2767e86052133471cc5b
 --- /dev/null
 +++ b/src/runtime/detsched.go
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,207 @@
 +// Copyright 2026 The Go Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style
 +// license that can be found in the LICENSE file.
@@ -206,6 +206,12 @@ index 0000000000000000000000000000000000000000..bbf992407478e03ce58ba0882b88980d
 +	debug.updatemaxprocs = 0
 +	debug.traceallocfree.Store(0)
 +	MemProfileRate = 0
++
++	// Favor strict determinism over throughput: run GC stop-the-world and
++	// avoid stack shrinking side effects while deterministic mode is active.
++	debug.gcstoptheworld = 2
++	debug.gcshrinkstackoff = 1
++
 +	detschedForceTimerChanSync()
 +}
 +

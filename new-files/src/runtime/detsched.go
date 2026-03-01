@@ -49,6 +49,12 @@ func detschedInit() {
 	debug.updatemaxprocs = 0
 	debug.traceallocfree.Store(0)
 	MemProfileRate = 0
+
+	// Favor strict determinism over throughput: run GC stop-the-world and
+	// avoid stack shrinking side effects while deterministic mode is active.
+	debug.gcstoptheworld = 2
+	debug.gcshrinkstackoff = 1
+
 	detschedForceTimerChanSync()
 }
 
