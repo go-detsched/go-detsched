@@ -60,12 +60,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEMO_DIR="${REPO_ROOT}/demos/raftsim"
 mkdir -p "$LOG_DIR"
+CACHE_ROOT="${LOG_DIR}/raftsim-go-cache"
+mkdir -p "${CACHE_ROOT}/mod" "${CACHE_ROOT}/build"
 
 warm_modules() {
   echo "-- warming raft demo module cache"
   (
     cd "$DEMO_DIR"
-    "$GO_BIN" mod download
+    env \
+      GOMODCACHE="${CACHE_ROOT}/mod" \
+      GOCACHE="${CACHE_ROOT}/build" \
+      "$GO_BIN" mod download
   ) > "${LOG_DIR}/raftsim_mod_download.log" 2>&1
 }
 
@@ -82,7 +87,9 @@ set +e
 (
   cd "$DEMO_DIR"
   timeout "${TIMEOUT_SECS}s" env \
-    GODEBUG="detsched=1,detschedseed=1" \
+    GODEBUG="" \
+    GOMODCACHE="${CACHE_ROOT}/mod" \
+    GOCACHE="${CACHE_ROOT}/build" \
     RAFTSIM_SEED_START="${SEED_START}" \
     RAFTSIM_SEED_COUNT="${SEED_COUNT}" \
     RAFTSIM_NODES=5 \
@@ -100,6 +107,36 @@ if [[ "$status" -ne 0 ]]; then
   echo "---- recent ${OUT_FILE} ----" >&2
   rg -n "." "$OUT_FILE" -m 60 >&2 || true
   exit "$status"
+fi
+
+# Smoke check with detsched enabled to verify patched-runtime execution path.
+DETSCHED_OUT="${LOG_DIR}/raftsim_detsched_smoke.log"
+set +e
+(
+  cd "$DEMO_DIR"
+  timeout 40s env \
+    GODEBUG="detsched=1,detschedseed=7" \
+    GOMODCACHE="${CACHE_ROOT}/mod" \
+    GOCACHE="${CACHE_ROOT}/build" \
+    "$GO_BIN" run ./cmd/raftsim \
+      --scenario split_vote \
+      --seed 7 \
+      --nodes 5 \
+      --rounds 2 \
+      --synctest=false
+) > "$DETSCHED_OUT" 2>&1
+status=$?
+set -e
+if [[ "$status" -ne 0 ]]; then
+  echo "detsched smoke run failed with status=${status}" >&2
+  echo "---- recent ${DETSCHED_OUT} ----" >&2
+  rg -n "." "$DETSCHED_OUT" -m 60 >&2 || true
+  exit "$status"
+fi
+if ! rg -q "issue=RAFT_SPLIT_VOTE_LIVELOCK" "$DETSCHED_OUT"; then
+  echo "detsched smoke output missing expected split-vote issue marker" >&2
+  rg -n "." "$DETSCHED_OUT" -m 60 >&2 || true
+  exit 1
 fi
 
 echo "Raft demo deterministic checks passed."
