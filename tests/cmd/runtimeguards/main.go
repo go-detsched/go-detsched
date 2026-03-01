@@ -13,7 +13,7 @@ func main() {
 	procs := runtime.GOMAXPROCS(0)
 	traceErr := rttrace.Start(io.Discard)
 	if traceErr == nil {
-		_ = rttrace.Stop()
+		rttrace.Stop()
 		fmt.Fprintln(os.Stderr, "expected trace start to fail in detsched mode")
 		os.Exit(1)
 	}
