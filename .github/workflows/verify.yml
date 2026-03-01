@@ -9,13 +9,9 @@ on:
 
 jobs:
   verify-go-1-26:
-<<<<<<< HEAD
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-=======
     runs-on: ubuntu-latest
     env:
       GO_DETSCHED_WORKDIR: ${{ runner.temp }}/go-detsched
->>>>>>> 22bee76 (Split CI demo steps and harden synctest execution.)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,4 +37,4 @@ jobs:
 
       - name: Run synctest demo
         run: |
-          timeout 8m "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_synctest_demo.sh" 12345 99999
+          timeout 90s "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_synctest_demo.sh" 12345 99999
