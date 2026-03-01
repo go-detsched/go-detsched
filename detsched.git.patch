@@ -224,7 +224,7 @@ index 0000000000000000000000000000000000000000..34b51147c6946d2f98cc5b1367f30f2a
 +echo "Combined stress determinism demo passed."
 diff --git a/misc/detscheddemo/run_synctest_demo.sh b/misc/detscheddemo/run_synctest_demo.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..24ce713cd4093bfbcd28b344e433c24cb987942d
+index 0000000000000000000000000000000000000000..90e17fb73e690067e1c74622948199ab45746173
 --- /dev/null
 +++ b/misc/detscheddemo/run_synctest_demo.sh
 @@ -0,0 +1,40 @@
@@ -240,7 +240,7 @@ index 0000000000000000000000000000000000000000..24ce713cd4093bfbcd28b344e433c24c
 +
 +run_once() {
 +  local s="$1"
-+  GODEBUG="detsched=1,detschedseed=${s}" "$GO" test testing/synctest -run "^${TEST_NAME}$" -count=1 -v \
++  GODEBUG="detsched=1,detschedseed=${s}" "$GO" test testing/synctest -run "^${TEST_NAME}$" -count=1 -v -timeout=5m \
 +    | sed -n 's/.*detsched-hash=\([0-9a-f]\{16\}\).*/\1/p'
 +}
 +
@@ -893,10 +893,10 @@ index 5f568d205ef436adc542a3d628c5d66e1540cebb..53c1a157333d3eacc78ae9bc981cfe53
  	}
 diff --git a/src/testing/synctest/detsched_demo_test.go b/src/testing/synctest/detsched_demo_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..a66bfae863354b7cceb5a3966d69001bd65934da
+index 0000000000000000000000000000000000000000..8b904b028ca863c56d6b15689ec49154c8033088
 --- /dev/null
 +++ b/src/testing/synctest/detsched_demo_test.go
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,95 @@
 +// Copyright 2026 The Go Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style
 +// license that can be found in the LICENSE file.
@@ -904,17 +904,20 @@ index 0000000000000000000000000000000000000000..a66bfae863354b7cceb5a3966d69001b
 +package synctest_test
 +
 +import (
++	"log/slog"
 +	"runtime"
 +	"testing"
 +	"testing/synctest"
 +)
 +
 +func TestDetSchedSeededBubbleHash(t *testing.T) {
++	log, buf := newDetslogLogger()
 +	synctest.Test(t, func(t *testing.T) {
 +		const workers = 64
 +		const iters = 1500
 +
 +		runtime.GOMAXPROCS(1)
++		log.Info("start", slog.Int("workers", workers), slog.Int("iters", iters))
 +
 +		start := make(chan struct{})
 +		out := make(chan uint64, workers)
@@ -922,6 +925,9 @@ index 0000000000000000000000000000000000000000..a66bfae863354b7cceb5a3966d69001b
 +			workerID := uint64(i + 1)
 +			go func() {
 +				<-start
++				if workerID <= 3 {
++					log.Info("worker-begin", slog.Uint64("worker", workerID))
++				}
 +				state := splitmix64(workerID*0x9e3779b97f4a7c15 + 0x243f6a8885a308d3)
 +				acc := uint64(0x6a09e667f3bcc909 ^ workerID)
 +				for j := 0; j < iters; j++ {
@@ -938,6 +944,7 @@ index 0000000000000000000000000000000000000000..a66bfae863354b7cceb5a3966d69001b
 +			}()
 +		}
 +		close(start)
++		log.Info("workers-started")
 +
 +		hash := uint64(0xcbf29ce484222325)
 +		for i := 0; i < workers; i++ {
@@ -945,8 +952,12 @@ index 0000000000000000000000000000000000000000..a66bfae863354b7cceb5a3966d69001b
 +			hash ^= mix(v ^ uint64(i+1))
 +			hash *= 0x100000001b3
 +		}
++		log.Info("workers-drained")
 +		t.Logf("detsched-hash=%016x", hash)
 +	})
++	t.Log("detsched-trace-begin")
++	t.Log(buf.Dump())
++	t.Log("detsched-trace-end")
 +}
 +
 +func arithmetic(a, b, workerID, iter uint64) uint64 {
@@ -980,4 +991,99 @@ index 0000000000000000000000000000000000000000..a66bfae863354b7cceb5a3966d69001b
 +
 +func rotl(x uint64, k int) uint64 {
 +	return (x << k) | (x >> (64 - k))
++}
+diff --git a/src/testing/synctest/detslog_test.go b/src/testing/synctest/detslog_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..71e79e87cdf08eb7e5e349e35e95f24a36707b39
+--- /dev/null
++++ b/src/testing/synctest/detslog_test.go
+@@ -0,0 +1,89 @@
++package synctest_test
++
++import (
++	"context"
++	"fmt"
++	"log/slog"
++	"sort"
++	"strings"
++	"sync"
++	"time"
++)
++
++type detslog struct {
++	mu      sync.Mutex
++	entries []detslogEntry
++}
++
++type detslogEntry struct {
++	level slog.Level
++	msg   string
++	attrs []slog.Attr
++}
++
++func newDetslogLogger() (*slog.Logger, *detslog) {
++	h := &detslog{entries: make([]detslogEntry, 0, 128)}
++	return slog.New(h), h
++}
++
++func (h *detslog) Enabled(_ context.Context, _ slog.Level) bool {
++	return true
++}
++
++func (h *detslog) Handle(_ context.Context, r slog.Record) error {
++	entry := detslogEntry{
++		level: r.Level,
++		msg:   r.Message,
++		attrs: make([]slog.Attr, 0, r.NumAttrs()),
++	}
++	r.Attrs(func(a slog.Attr) bool {
++		entry.attrs = append(entry.attrs, a)
++		return true
++	})
++
++	h.mu.Lock()
++	h.entries = append(h.entries, entry)
++	h.mu.Unlock()
++	return nil
++}
++
++func (h *detslog) WithAttrs(_ []slog.Attr) slog.Handler {
++	return h
++}
++
++func (h *detslog) WithGroup(_ string) slog.Handler {
++	return h
++}
++
++func (h *detslog) Dump() string {
++	h.mu.Lock()
++	entries := append([]detslogEntry(nil), h.entries...)
++	h.mu.Unlock()
++
++	lines := make([]string, 0, len(entries))
++	for i, e := range entries {
++		attrs := append([]slog.Attr(nil), e.attrs...)
++		sort.Slice(attrs, func(i, j int) bool {
++			return attrs[i].Key < attrs[j].Key
++		})
++		var b strings.Builder
++		// Use entry index as a stable sequence number in output.
++		fmt.Fprintf(&b, "[%03d] level=%s msg=%q", i, e.level.String(), e.msg)
++		for _, a := range attrs {
++			fmt.Fprintf(&b, " %s=%v", a.Key, attrValue(a))
++		}
++		lines = append(lines, b.String())
++	}
++	return strings.Join(lines, "\n")
++}
++
++func attrValue(a slog.Attr) any {
++	if a.Value.Kind() == slog.KindTime {
++		t := a.Value.Time()
++		if t.IsZero() {
++			return "0001-01-01T00:00:00Z"
++		}
++		return t.UTC().Format(time.RFC3339Nano)
++	}
++	return a.Value.Any()
 +}
