@@ -1,0 +1,116 @@
+name: Release Detsched Toolchains
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag to publish (for example: v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  GO_TAG: go1.26.0
+
+jobs:
+  build-linux-amd64:
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install bootstrap Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.0"
+
+      - name: Build Linux amd64 toolchain tarball
+        run: |
+          set -euo pipefail
+          chmod +x scripts/*.sh
+          ./scripts/compile-patch.sh
+          git diff --exit-code -- detsched.git.patch
+
+          PREFIX="$RUNNER_TEMP/go-detsched-${GO_TAG}-linux-amd64"
+          ./scripts/build.sh --go-tag "$GO_TAG" --prefix "$PREFIX" --workdir "$RUNNER_TEMP/go-work-linux" --no-verify
+
+          OUT="go-detsched-${GO_TAG}-linux-amd64.tar.gz"
+          tar -C "$(dirname "$PREFIX")" -czf "$OUT" "$(basename "$PREFIX")"
+
+      - name: Upload Linux tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-amd64
+          path: go-detsched-*.tar.gz
+          if-no-files-found: error
+
+  build-macos-arm64:
+    runs-on: macos-15-xlarge
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install bootstrap Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.0"
+
+      - name: Build macOS arm64 toolchain tarball
+        run: |
+          set -euo pipefail
+          chmod +x scripts/*.sh
+          ./scripts/compile-patch.sh
+          git diff --exit-code -- detsched.git.patch
+
+          PREFIX="$RUNNER_TEMP/go-detsched-${GO_TAG}-darwin-arm64"
+          ./scripts/build.sh --go-tag "$GO_TAG" --prefix "$PREFIX" --workdir "$RUNNER_TEMP/go-work-macos" --no-verify
+
+          OUT="go-detsched-${GO_TAG}-darwin-arm64.tar.gz"
+          tar -C "$(dirname "$PREFIX")" -czf "$OUT" "$(basename "$PREFIX")"
+
+      - name: Upload macOS tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-darwin-arm64
+          path: go-detsched-*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [build-linux-amd64, build-macos-arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "value=${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create checksums
+        run: |
+          set -euo pipefail
+          shopt -s globstar
+          sha256sum dist/**/*.tar.gz > dist/SHA256SUMS
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.value }}
+          files: |
+            dist/**/*.tar.gz
+            dist/SHA256SUMS
