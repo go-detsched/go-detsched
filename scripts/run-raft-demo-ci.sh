@@ -4,9 +4,9 @@ set -euo pipefail
 GO_BIN="go"
 SEED="${SEED:-7}"
 LOG_DIR=""
-TIMEOUT_SECS="${TIMEOUT_SECS:-120}"
+TIMEOUT_SECS="${TIMEOUT_SECS:-420}"
 SEED_START="${SEED_START:-1}"
-SEED_COUNT="${SEED_COUNT:-12}"
+SEED_COUNT="${SEED_COUNT:-100}"
 NODES="${NODES:-5}"
 ROUNDS="${ROUNDS:-6}"
 
@@ -21,11 +21,11 @@ Options:
   --go <path>        Go binary to use (default: go from PATH)
   --seed <n>         Back-compat alias for --seed-start (default: 7 if used)
   --seed-start <n>   First seed in deterministic sweep (default: 1)
-  --seed-count <n>   Number of seeds to test per scenario (default: 12)
+  --seed-count <n>   Number of seeds to test per scenario (default: 100)
   --nodes <n>        Number of Raft nodes for scenarios (default: 5)
   --rounds <n>       Proposal rounds for append scenarios (default: 6)
   --log-dir <path>   Directory for detailed logs (required)
-  --timeout <sec>    Total go test timeout in seconds (default: 120)
+  --timeout <sec>    Total go test timeout in seconds (default: 420)
   -h, --help         Show help
 EOF
 }

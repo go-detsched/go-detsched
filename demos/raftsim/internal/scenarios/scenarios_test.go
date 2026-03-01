@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestSynctestDeterministicRepro(t *testing.T) {
@@ -31,15 +32,22 @@ func TestSynctestDeterministicRepro(t *testing.T) {
 					Synctest: true,
 				}
 
+				seedStartTime := time.Now()
+
+				run1Start := time.Now()
 				r1, err := RunWithSynctest(t, cfg)
 				if err != nil {
 					t.Fatalf("first run error: %v", err)
 				}
+				run1Dur := time.Since(run1Start)
 
+				run2Start := time.Now()
 				r2, err := RunWithSynctest(t, cfg)
 				if err != nil {
 					t.Fatalf("second run error: %v", err)
 				}
+				run2Dur := time.Since(run2Start)
+				seedDur := time.Since(seedStartTime)
 
 				if r1.IssueCode != r2.IssueCode || r1.EventHash != r2.EventHash || r1.Reason != r2.Reason || r1.Evidence != r2.Evidence || r1.BugObserved != r2.BugObserved || r1.Passed != r2.Passed {
 					t.Fatalf(
@@ -61,7 +69,7 @@ func TestSynctestDeterministicRepro(t *testing.T) {
 					)
 				}
 				t.Logf(
-					"scenario=%s seed=%d status=%s bug_observed=%t issue=%s hash=%s reason=%q evidence=%q",
+					"scenario=%s seed=%d status=%s bug_observed=%t issue=%s hash=%s reason=%q evidence=%q run1_ms=%d run2_ms=%d total_ms=%d",
 					r1.Scenario,
 					r1.Seed,
 					statusString(r1.Passed),
@@ -70,6 +78,9 @@ func TestSynctestDeterministicRepro(t *testing.T) {
 					r1.EventHash,
 					r1.Reason,
 					r1.Evidence,
+					run1Dur.Milliseconds(),
+					run2Dur.Milliseconds(),
+					seedDur.Milliseconds(),
 				)
 			})
 		}
