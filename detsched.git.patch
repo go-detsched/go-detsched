@@ -356,6 +356,19 @@ index 0000000000000000000000000000000000000000..bbf992407478e03ce58ba0882b88980d
 +	}
 +	return detschedRand64(uint64(salt))
 +}
+diff --git a/src/runtime/lock_spinbit.go b/src/runtime/lock_spinbit.go
+index 039ea6f5656a8aa45bac2100790c1a2c2179a60f..3735946dbd67e22e752bcf4494fbfb5bb53fec3e 100644
+--- a/src/runtime/lock_spinbit.go
++++ b/src/runtime/lock_spinbit.go
+@@ -347,7 +347,7 @@ func unlock2Wake(l *mutex, haveStackLock bool, endTicks int64) {
+ 
+ 	// On occasion, seek out and wake the M at the bottom of the stack so it
+ 	// doesn't starve.
+-	antiStarve := cheaprandn(mutexTailWakePeriod) == 0
++	antiStarve := !detschedEnabled() && cheaprandn(mutexTailWakePeriod) == 0
+ 
+ 	if haveStackLock {
+ 		goto useStackLock
 diff --git a/src/runtime/proc.go b/src/runtime/proc.go
 index 005c875cbf180198a4aa9123288b6daca27acbdd..c8bd2539bf9eb6d78e2fb0bcc12c0a29808d0a6e 100644
 --- a/src/runtime/proc.go
