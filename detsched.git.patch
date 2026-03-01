@@ -224,10 +224,10 @@ index 0000000000000000000000000000000000000000..34b51147c6946d2f98cc5b1367f30f2a
 +echo "Combined stress determinism demo passed."
 diff --git a/misc/detscheddemo/run_synctest_demo.sh b/misc/detscheddemo/run_synctest_demo.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..90e17fb73e690067e1c74622948199ab45746173
+index 0000000000000000000000000000000000000000..d5ec89e215f88c26018e0e3d4295b544729e9389
 --- /dev/null
 +++ b/misc/detscheddemo/run_synctest_demo.sh
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,78 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
@@ -237,19 +237,56 @@ index 0000000000000000000000000000000000000000..90e17fb73e690067e1c74622948199ab
 +
 +seed="${1:-12345}"
 +other_seed="${2:-99999}"
++RUN_HASH=""
++
++ts() {
++  date -u +"%Y-%m-%dT%H:%M:%SZ"
++}
 +
 +run_once() {
 +  local s="$1"
-+  GODEBUG="detsched=1,detschedseed=${s}" "$GO" test testing/synctest -run "^${TEST_NAME}$" -count=1 -v -timeout=5m \
-+    | sed -n 's/.*detsched-hash=\([0-9a-f]\{16\}\).*/\1/p'
++  local label="$2"
++  local log_file
++  log_file="$(mktemp)"
++
++  echo "[$(ts)] synctest start label=${label} seed=${s}"
++  set +e
++  GODEBUG="detsched=1,detschedseed=${s}" "$GO" test testing/synctest -run "^${TEST_NAME}$" -count=1 -v -timeout=5m 2>&1 | tee "$log_file"
++  local test_status=${PIPESTATUS[0]}
++  set -e
++  echo "[$(ts)] synctest end label=${label} seed=${s} exit=${test_status}"
++
++  if [[ "$test_status" -ne 0 ]]; then
++    echo "[$(ts)] FAIL: go test exited non-zero for label=${label}" >&2
++    echo "[$(ts)] Last 120 lines from go test output:" >&2
++    tail -n 120 "$log_file" >&2
++    rm -f "$log_file"
++    return "$test_status"
++  fi
++
++  local hash
++  hash="$(sed -n 's/.*detsched-hash=\([0-9a-f]\{16\}\).*/\1/p' "$log_file" | tail -n1)"
++  if [[ -z "$hash" ]]; then
++    echo "[$(ts)] FAIL: could not extract detsched hash for label=${label}" >&2
++    echo "[$(ts)] Last 120 lines from go test output:" >&2
++    tail -n 120 "$log_file" >&2
++    rm -f "$log_file"
++    return 1
++  fi
++
++  RUN_HASH="$hash"
++  echo "[$(ts)] synctest hash label=${label} value=${RUN_HASH}"
++  rm -f "$log_file"
 +}
 +
 +echo "Running synctest demo with seed=$seed (run 1)..."
-+h1="$(run_once "$seed")"
++run_once "$seed" "run1"
++h1="$RUN_HASH"
 +echo "hash=$h1"
 +
 +echo "Running synctest demo with seed=$seed (run 2)..."
-+h2="$(run_once "$seed")"
++run_once "$seed" "run2"
++h2="$RUN_HASH"
 +echo "hash=$h2"
 +
 +if [[ "$h1" != "$h2" ]]; then
@@ -258,7 +295,8 @@ index 0000000000000000000000000000000000000000..90e17fb73e690067e1c74622948199ab
 +fi
 +
 +echo "Running synctest demo with seed=$other_seed..."
-+h3="$(run_once "$other_seed")"
++run_once "$other_seed" "run3"
++h3="$RUN_HASH"
 +echo "hash=$h3"
 +
 +if [[ "$h1" == "$h3" ]]; then
