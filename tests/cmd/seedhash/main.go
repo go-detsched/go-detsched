@@ -3,7 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
+	"os"
 	"runtime"
+	rttrace "runtime/trace"
+	"strings"
 )
 
 func main() {
@@ -12,8 +16,22 @@ func main() {
 	procs := flag.Int("procs", 1, "GOMAXPROCS")
 	flag.Parse()
 
+	requireDetSched()
 	runtime.GOMAXPROCS(*procs)
 	fmt.Printf("%016x\n", run(*workers, *iters))
+}
+
+func requireDetSched() {
+	err := rttrace.Start(io.Discard)
+	if err == nil {
+		rttrace.Stop()
+		fmt.Fprintln(os.Stderr, "deterministic scheduler mode is not active")
+		os.Exit(2)
+	}
+	if !strings.Contains(err.Error(), "disabled in deterministic scheduler mode") {
+		fmt.Fprintf(os.Stderr, "unexpected trace start error: %v\n", err)
+		os.Exit(2)
+	}
 }
 
 func run(workers, iters int) uint64 {
