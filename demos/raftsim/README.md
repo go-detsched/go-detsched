@@ -50,11 +50,12 @@ scenario=stale_leader seed=7 status=PASS bug_observed=true issue=RAFT_STALE_LEAD
 
 ## Why `synctest`
 
-By default, scenario runs are wrapped in `testing/synctest`, so simulated time jumps forward
-as soon as all goroutines are blocked on timers/channels. This keeps the demo
-fast while still exercising timer-heavy election logic.
+By default, CLI runs can be wrapped in `testing/synctest` (`--synctest=true`),
+so simulated time jumps forward as soon as all goroutines are blocked on
+timers/channels.
 
-If needed, you can disable it via `--synctest=false`.
+For deterministic CI validation, this repo now uses a **proper `go test`**
+synctest suite in `internal/scenarios/scenarios_test.go`.
 
 ## Using Binary Releases / CI Outputs
 
@@ -71,13 +72,17 @@ Then run the demo with that binary via `GO_BIN` (or equivalent explicit path).
 
 CI uses `scripts/run-raft-demo-ci.sh` with the patched toolchain to:
 
-1. run each scenario twice with the same seed,
-2. assert the expected bug issue code is observed, and
-3. assert the summary output is byte-identical across reruns.
+1. run `go test ./internal/scenarios -run TestSynctestDeterministicRepro` once,
+2. sweep many seeds per scenario inside one compiled test binary,
+3. assert deterministic same-seed replay inside the test, and
+4. assert expected bug issue classes are observed in output logs.
 
-CI currently runs with `--synctest=false` for the `bufconn` transport path to avoid
-indefinite blocking in workflow environments while still validating deterministic
-bug reproduction against the patched toolchain.
+You can tune the seed sweep via environment variables consumed by the test:
+
+- `RAFTSIM_SEED_START` (default `1`)
+- `RAFTSIM_SEED_COUNT` (default `25`)
+- `RAFTSIM_NODES` (default `5`)
+- `RAFTSIM_ROUNDS` (default `4`)
 
 Example local invocation against a patched binary:
 

@@ -1,0 +1,112 @@
+package scenarios
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"testing"
+)
+
+func TestSynctestDeterministicRepro(t *testing.T) {
+	seedStart := envInt("RAFTSIM_SEED_START", 1)
+	seedCount := envInt("RAFTSIM_SEED_COUNT", 25)
+	nodes := envInt("RAFTSIM_NODES", 5)
+	rounds := envInt("RAFTSIM_ROUNDS", 4)
+
+	if seedCount <= 0 {
+		t.Fatalf("RAFTSIM_SEED_COUNT must be > 0, got %d", seedCount)
+	}
+	observedIssue := map[string]bool{}
+
+	for _, scenario := range ScenarioNames() {
+		for i := 0; i < seedCount; i++ {
+			seed := int64(seedStart + i)
+			name := fmt.Sprintf("%s_seed_%d", scenario, seed)
+			t.Run(name, func(t *testing.T) {
+				cfg := RunConfig{
+					Scenario: scenario,
+					Seed:     seed,
+					Nodes:    nodes,
+					Rounds:   rounds,
+					Verbose:  false,
+					Synctest: true,
+				}
+
+				r1, err := RunWithSynctest(t, cfg)
+				if err != nil {
+					t.Fatalf("first run error: %v", err)
+				}
+
+				r2, err := RunWithSynctest(t, cfg)
+				if err != nil {
+					t.Fatalf("second run error: %v", err)
+				}
+
+				if r1.IssueCode != r2.IssueCode || r1.EventHash != r2.EventHash || r1.Reason != r2.Reason || r1.Evidence != r2.Evidence || r1.BugObserved != r2.BugObserved || r1.Passed != r2.Passed {
+					t.Fatalf(
+						"non-deterministic replay scenario=%s seed=%d run1(status=%v bug=%v issue=%s hash=%s reason=%q evidence=%q) run2(status=%v bug=%v issue=%s hash=%s reason=%q evidence=%q)",
+						scenario,
+						seed,
+						r1.Passed,
+						r1.BugObserved,
+						r1.IssueCode,
+						r1.EventHash,
+						r1.Reason,
+						r1.Evidence,
+						r2.Passed,
+						r2.BugObserved,
+						r2.IssueCode,
+						r2.EventHash,
+						r2.Reason,
+						r2.Evidence,
+					)
+				}
+				if r1.BugObserved {
+					observedIssue[r1.IssueCode] = true
+				}
+
+				t.Logf(
+					"scenario=%s seed=%d status=%s bug_observed=%t issue=%s hash=%s reason=%q evidence=%q",
+					r1.Scenario,
+					r1.Seed,
+					statusString(r1.Passed),
+					r1.BugObserved,
+					r1.IssueCode,
+					r1.EventHash,
+					r1.Reason,
+					r1.Evidence,
+				)
+			})
+		}
+	}
+
+	required := []string{
+		"RAFT_SPLIT_VOTE_LIVELOCK",
+		"RAFT_STALE_LEADER_ACCEPTED",
+		"RAFT_COMMIT_WITHOUT_MAJORITY",
+	}
+	for _, issue := range required {
+		if !observedIssue[issue] {
+			t.Fatalf("seed sweep did not observe required issue=%s", issue)
+		}
+	}
+}
+
+func envInt(name string, def int) int {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func statusString(ok bool) string {
+	if ok {
+		return "PASS"
+	}
+	return "FAIL"
+}

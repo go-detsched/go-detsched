@@ -68,6 +68,32 @@ func Run(cfg RunConfig) (Result, error) {
 	return runOne(cfg)
 }
 
+// RunWithSynctest executes one scenario in a proper testing/synctest bubble.
+// This is the preferred entrypoint for deterministic test suites.
+func RunWithSynctest(t *testing.T, cfg RunConfig) (Result, error) {
+	t.Helper()
+	if cfg.Nodes < 3 {
+		cfg.Nodes = 3
+	}
+	if cfg.Rounds <= 0 {
+		cfg.Rounds = 1
+	}
+	if cfg.Seed == 0 {
+		cfg.Seed = 1
+	}
+	cfg.Synctest = true
+
+	var (
+		result Result
+		runErr error
+	)
+	synctest.Test(t, func(t *testing.T) {
+		result, runErr = runOne(cfg)
+		synctest.Wait()
+	})
+	return result, runErr
+}
+
 func ScenarioNames() []string {
 	return []string{
 		ScenarioSplitVote,
