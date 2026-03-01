@@ -4,7 +4,7 @@ set -euo pipefail
 GO_BIN="go"
 SEED="${SEED:-7}"
 LOG_DIR=""
-TIMEOUT_SECS="${TIMEOUT_SECS:-45}"
+TIMEOUT_SECS="${TIMEOUT_SECS:-120}"
 
 usage() {
   cat <<'EOF'
@@ -17,7 +17,7 @@ Options:
   --go <path>        Go binary to use (default: go from PATH)
   --seed <n>         Scenario seed (default: 7)
   --log-dir <path>   Directory for detailed logs (required)
-  --timeout <sec>    Per-run timeout in seconds (default: 45)
+  --timeout <sec>    Per-run timeout in seconds (default: 120)
   -h, --help         Show help
 EOF
 }
@@ -83,6 +83,14 @@ run_one() {
   echo "$out_file"
 }
 
+warm_modules() {
+  echo "-- warming raft demo module cache"
+  (
+    cd "$DEMO_DIR"
+    "$GO_BIN" mod download
+  ) > "${LOG_DIR}/raftsim_mod_download.log" 2>&1
+}
+
 expected_issue_for() {
   case "$1" in
     split_vote) echo "RAFT_SPLIT_VOTE_LIVELOCK" ;;
@@ -129,6 +137,7 @@ echo "go_bin=${GO_BIN}"
 echo "seed=${SEED}"
 echo "logs=${LOG_DIR}"
 echo "timeout_sec=${TIMEOUT_SECS}"
+warm_modules
 
 scenarios=(split_vote stale_leader reorder_commit)
 for scenario in "${scenarios[@]}"; do
