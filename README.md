@@ -6,8 +6,25 @@ This repo distributes a patch and simple scripts so you can build a patched Go t
 
 ## What this repo contains
 
-- `detsched.git.patch`: git-native patch (includes file modes)
+- `detsched.git.patch`: compiled apply artifact (git-native patch with file modes)
+- `patches/detsched.inline.patch`: inline edits to existing upstream Go files
+- `new-files/`: dedicated source tree for files that are entirely new to upstream Go
+- `scripts/compile-patch.sh`: compiles inline patch + `new-files/` into `detsched.git.patch`
 - `scripts/build.sh`: main script (apply + build + demo verify + optional install)
+
+## Patch maintenance workflow
+
+When you modify this repo's patch content:
+
+1. Edit existing upstream files in `patches/detsched.inline.patch`.
+2. Put any entirely new upstream files under `new-files/` with upstream-relative paths.
+3. Recompile the final patch artifact:
+
+```bash
+./scripts/compile-patch.sh
+```
+
+4. Commit all related changes, including the regenerated `detsched.git.patch`.
 
 ## Quick start
 
@@ -43,7 +60,7 @@ By default, `build.sh` does:
 - `misc/detscheddemo/run_all_demos.sh` (seed + stress + synctest + fuzz race)
 - install to `--prefix` (unless `--no-install`)
 
-The patch file is the canonical apply artifact.
+The patch file is the canonical apply artifact for consumers.
 
 ## Compatibility
 

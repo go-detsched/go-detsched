@@ -5,17 +5,20 @@
 package synctest_test
 
 import (
+	"log/slog"
 	"runtime"
 	"testing"
 	"testing/synctest"
 )
 
 func TestDetSchedSeededBubbleHash(t *testing.T) {
+	log, buf := newDetslogLogger()
 	synctest.Test(t, func(t *testing.T) {
 		const workers = 64
 		const iters = 1500
 
 		runtime.GOMAXPROCS(1)
+		log.Info("start", slog.Int("workers", workers), slog.Int("iters", iters))
 
 		start := make(chan struct{})
 		out := make(chan uint64, workers)
@@ -23,6 +26,9 @@ func TestDetSchedSeededBubbleHash(t *testing.T) {
 			workerID := uint64(i + 1)
 			go func() {
 				<-start
+				if workerID <= 3 {
+					log.Info("worker-begin", slog.Uint64("worker", workerID))
+				}
 				state := splitmix64(workerID*0x9e3779b97f4a7c15 + 0x243f6a8885a308d3)
 				acc := uint64(0x6a09e667f3bcc909 ^ workerID)
 				for j := 0; j < iters; j++ {
@@ -39,6 +45,7 @@ func TestDetSchedSeededBubbleHash(t *testing.T) {
 			}()
 		}
 		close(start)
+		log.Info("workers-started")
 
 		hash := uint64(0xcbf29ce484222325)
 		for i := 0; i < workers; i++ {
@@ -46,8 +53,12 @@ func TestDetSchedSeededBubbleHash(t *testing.T) {
 			hash ^= mix(v ^ uint64(i+1))
 			hash *= 0x100000001b3
 		}
+		log.Info("workers-drained")
 		t.Logf("detsched-hash=%016x", hash)
 	})
+	t.Log("detsched-trace-begin")
+	t.Log(buf.Dump())
+	t.Log("detsched-trace-end")
 }
 
 func arithmetic(a, b, workerID, iter uint64) uint64 {
