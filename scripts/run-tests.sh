@@ -54,19 +54,19 @@ build_seedhash_wallclock_binary() {
 
 run_seedhash() {
   local seed="$1"
-  GODEBUG="detsched=1,detschedseed=${seed}" \
+  GOGC=off GODEBUG="detsched=1,detschedseed=${seed}" \
     "$SEEDHASH_BIN" -workers=64 -iters=2000 -procs=1
 }
 
 run_seedhash_dump() {
   local seed="$1"
-  GODEBUG="detsched=1,detschedseed=${seed}" \
+  GOGC=off GODEBUG="detsched=1,detschedseed=${seed}" \
     "$SEEDHASH_BIN" -workers=64 -iters=2000 -procs=1 -dump-order
 }
 
 run_seedhash_wallclock() {
   local seed="$1"
-  GODEBUG="detsched=1,detschedseed=${seed}" \
+  GOGC=off GODEBUG="detsched=1,detschedseed=${seed}" \
     "$SEEDHASH_WALLCLOCK_BIN" -workers=64 -iters=2000 -procs=1
 }
 
