@@ -116,15 +116,7 @@ func schedulerRandnFrom(n uint32, salt uint64) uint32 {
 }
 
 func schedulerDropRunNext(goid uint64) bool {
-	if !schedulerRandomized() {
-		return false
-	}
-	// In strict deterministic mode, avoid runnext dropping heuristics that can
-	// vary with goroutine identity. Fuzz mode provides schedule perturbation.
-	if detschedEnabled() {
-		return false
-	}
-	return schedulerRandnFrom(2, detschedSaltRunNext^goid) == 0
+	return schedulerRandomized() && schedulerRandnFrom(2, detschedSaltRunNext^goid) == 0
 }
 
 func schedulerFuzzDropRunNext(goid uint64) bool {
@@ -132,9 +124,6 @@ func schedulerFuzzDropRunNext(goid uint64) bool {
 }
 
 func schedulerShuffleIndexRunQPutSlow(i uint32, goid uint64) uint32 {
-	if detschedEnabled() {
-		return i
-	}
 	return schedulerRandnFrom(i+1, detschedSaltRunQPutSlow^uint64(i)^goid)
 }
 
@@ -143,9 +132,6 @@ func schedulerFuzzShuffleIndexRunQPutSlow(i uint32, goid uint64) uint32 {
 }
 
 func schedulerShuffleIndexRunQPutBatch(i uint32, goid uint64) uint32 {
-	if detschedEnabled() {
-		return i
-	}
 	return schedulerRandnFrom(i+1, detschedSaltRunQPutBatch^uint64(i)^goid)
 }
 

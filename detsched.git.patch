@@ -151,10 +151,10 @@ index ea4d3a8cb0bb33495ef6a104a7860ee7f88a8655..13d1c108778e48ef5808152e3b52d55d
  		hz = 0
 diff --git a/src/runtime/detsched.go b/src/runtime/detsched.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..d5bc8edfadaecd84749f2767e86052133471cc5b
+index 0000000000000000000000000000000000000000..0b5dbae49cb8f5de399e144131fb14e5e0bfe0b4
 --- /dev/null
 +++ b/src/runtime/detsched.go
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,193 @@
 +// Copyright 2026 The Go Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style
 +// license that can be found in the LICENSE file.
@@ -273,15 +273,7 @@ index 0000000000000000000000000000000000000000..d5bc8edfadaecd84749f2767e8605213
 +}
 +
 +func schedulerDropRunNext(goid uint64) bool {
-+	if !schedulerRandomized() {
-+		return false
-+	}
-+	// In strict deterministic mode, avoid runnext dropping heuristics that can
-+	// vary with goroutine identity. Fuzz mode provides schedule perturbation.
-+	if detschedEnabled() {
-+		return false
-+	}
-+	return schedulerRandnFrom(2, detschedSaltRunNext^goid) == 0
++	return schedulerRandomized() && schedulerRandnFrom(2, detschedSaltRunNext^goid) == 0
 +}
 +
 +func schedulerFuzzDropRunNext(goid uint64) bool {
@@ -289,9 +281,6 @@ index 0000000000000000000000000000000000000000..d5bc8edfadaecd84749f2767e8605213
 +}
 +
 +func schedulerShuffleIndexRunQPutSlow(i uint32, goid uint64) uint32 {
-+	if detschedEnabled() {
-+		return i
-+	}
 +	return schedulerRandnFrom(i+1, detschedSaltRunQPutSlow^uint64(i)^goid)
 +}
 +
@@ -300,9 +289,6 @@ index 0000000000000000000000000000000000000000..d5bc8edfadaecd84749f2767e8605213
 +}
 +
 +func schedulerShuffleIndexRunQPutBatch(i uint32, goid uint64) uint32 {
-+	if detschedEnabled() {
-+		return i
-+	}
 +	return schedulerRandnFrom(i+1, detschedSaltRunQPutBatch^uint64(i)^goid)
 +}
 +
@@ -362,28 +348,6 @@ index 0000000000000000000000000000000000000000..d5bc8edfadaecd84749f2767e8605213
 +	}
 +	return detschedRand64(uint64(salt))
 +}
-diff --git a/src/runtime/lock_spinbit.go b/src/runtime/lock_spinbit.go
-index 039ea6f5656a8aa45bac2100790c1a2c2179a60f..78d613e3d6a527fc7074943dc8213a7d76490662 100644
---- a/src/runtime/lock_spinbit.go
-+++ b/src/runtime/lock_spinbit.go
-@@ -175,7 +175,7 @@ func lock2(l *mutex) {
- 	// On uniprocessors, no point spinning.
- 	// On multiprocessors, spin for mutexActiveSpinCount attempts.
- 	spin := 0
--	if numCPUStartup > 1 {
-+	if numCPUStartup > 1 && !detschedEnabled() {
- 		spin = mutexActiveSpinCount
- 	}
- 
-@@ -347,7 +347,7 @@ func unlock2Wake(l *mutex, haveStackLock bool, endTicks int64) {
- 
- 	// On occasion, seek out and wake the M at the bottom of the stack so it
- 	// doesn't starve.
--	antiStarve := cheaprandn(mutexTailWakePeriod) == 0
-+	antiStarve := !detschedEnabled() && cheaprandn(mutexTailWakePeriod) == 0
- 
- 	if haveStackLock {
- 		goto useStackLock
 diff --git a/src/runtime/proc.go b/src/runtime/proc.go
 index 005c875cbf180198a4aa9123288b6daca27acbdd..c8bd2539bf9eb6d78e2fb0bcc12c0a29808d0a6e 100644
 --- a/src/runtime/proc.go

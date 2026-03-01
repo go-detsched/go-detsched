@@ -149,28 +149,6 @@ index ea4d3a8cb0bb33495ef6a104a7860ee7f88a8655..13d1c108778e48ef5808152e3b52d55d
  	// Clamp hz to something reasonable.
  	if hz < 0 {
  		hz = 0
-diff --git a/src/runtime/lock_spinbit.go b/src/runtime/lock_spinbit.go
-index 039ea6f5656a8aa45bac2100790c1a2c2179a60f..78d613e3d6a527fc7074943dc8213a7d76490662 100644
---- a/src/runtime/lock_spinbit.go
-+++ b/src/runtime/lock_spinbit.go
-@@ -175,7 +175,7 @@ func lock2(l *mutex) {
- 	// On uniprocessors, no point spinning.
- 	// On multiprocessors, spin for mutexActiveSpinCount attempts.
- 	spin := 0
--	if numCPUStartup > 1 {
-+	if numCPUStartup > 1 && !detschedEnabled() {
- 		spin = mutexActiveSpinCount
- 	}
- 
-@@ -347,7 +347,7 @@ func unlock2Wake(l *mutex, haveStackLock bool, endTicks int64) {
- 
- 	// On occasion, seek out and wake the M at the bottom of the stack so it
- 	// doesn't starve.
--	antiStarve := cheaprandn(mutexTailWakePeriod) == 0
-+	antiStarve := !detschedEnabled() && cheaprandn(mutexTailWakePeriod) == 0
- 
- 	if haveStackLock {
- 		goto useStackLock
 diff --git a/src/runtime/proc.go b/src/runtime/proc.go
 index 005c875cbf180198a4aa9123288b6daca27acbdd..c8bd2539bf9eb6d78e2fb0bcc12c0a29808d0a6e 100644
 --- a/src/runtime/proc.go

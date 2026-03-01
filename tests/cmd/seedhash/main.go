@@ -14,22 +14,11 @@ func main() {
 	workers := flag.Int("workers", 64, "number of worker goroutines")
 	iters := flag.Int("iters", 2000, "iterations per worker")
 	procs := flag.Int("procs", 1, "GOMAXPROCS")
-	dumpOrder := flag.Bool("dump-order", false, "print receive-order transcript")
 	flag.Parse()
 
 	requireDetSched()
 	runtime.GOMAXPROCS(*procs)
-	h, order := run(*workers, *iters)
-	fmt.Printf("%016x\n", h)
-	if *dumpOrder {
-		for i, id := range order {
-			if i > 0 {
-				fmt.Print(",")
-			}
-			fmt.Print(id)
-		}
-		fmt.Println()
-	}
+	fmt.Printf("%016x\n", run(*workers, *iters))
 }
 
 func requireDetSched() {
@@ -45,7 +34,7 @@ func requireDetSched() {
 	}
 }
 
-func run(workers, iters int) (uint64, []uint64) {
+func run(workers, iters int) uint64 {
 	type result struct {
 		id uint64
 		v  uint64
@@ -93,14 +82,12 @@ func run(workers, iters int) (uint64, []uint64) {
 	}
 	close(start)
 	hash := uint64(0xcbf29ce484222325)
-	order := make([]uint64, 0, workers)
 	for i := 0; i < workers; i++ {
 		r := <-out
-		order = append(order, r.id)
 		hash ^= mix(r.v ^ r.id*0x100000001b3)
 		hash = (hash << 13) | (hash >> 51)
 	}
-	return hash, order
+	return hash
 }
 
 func mix(x uint64) uint64 {
