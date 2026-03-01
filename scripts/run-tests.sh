@@ -28,10 +28,14 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SEEDHASH_BIN=""
+SEEDHASH_WALLCLOCK_BIN=""
 
 cleanup() {
   if [[ -n "$SEEDHASH_BIN" && -f "$SEEDHASH_BIN" ]]; then
     rm -f "$SEEDHASH_BIN"
+  fi
+  if [[ -n "$SEEDHASH_WALLCLOCK_BIN" && -f "$SEEDHASH_WALLCLOCK_BIN" ]]; then
+    rm -f "$SEEDHASH_WALLCLOCK_BIN"
   fi
 }
 trap cleanup EXIT
@@ -42,10 +46,22 @@ build_seedhash_binary() {
   chmod +x "$SEEDHASH_BIN"
 }
 
+build_seedhash_wallclock_binary() {
+  SEEDHASH_WALLCLOCK_BIN="$(mktemp /tmp/detsched-seedhash-wallclock-XXXXXX.bin)"
+  "$GO_BIN" build -o "$SEEDHASH_WALLCLOCK_BIN" "${REPO_ROOT}/tests/cmd/seedhash_wallclock/main.go"
+  chmod +x "$SEEDHASH_WALLCLOCK_BIN"
+}
+
 run_seedhash() {
   local seed="$1"
   GODEBUG="detsched=1,detschedseed=${seed}" \
     "$SEEDHASH_BIN" -workers=64 -iters=2000 -procs=1
+}
+
+run_seedhash_wallclock() {
+  local seed="$1"
+  GODEBUG="detsched=1,detschedseed=${seed}" \
+    "$SEEDHASH_WALLCLOCK_BIN" -workers=64 -iters=2000 -procs=1
 }
 
 echo "[1/4] seed reproducibility"
@@ -58,7 +74,17 @@ if [[ "$h1" != "$h2" ]]; then
 fi
 echo "ok: same-seed hash=${h1}"
 
-echo "[2/4] seed differentiation"
+echo "[2/5] wall-clock isolation probe (diagnostic)"
+build_seedhash_wallclock_binary
+hw1="$(run_seedhash_wallclock "$SEED_A")"
+hw2="$(run_seedhash_wallclock "$SEED_A")"
+if [[ "$hw1" != "$hw2" ]]; then
+  echo "diagnostic: wallclock_probe_non_deterministic same_seed hashes (${hw1} vs ${hw2})"
+else
+  echo "diagnostic: wallclock_probe_stable hash=${hw1}"
+fi
+
+echo "[3/5] seed differentiation"
 h3="$(run_seedhash "$SEED_B")"
 if [[ "$h1" == "$h3" ]]; then
   echo "FAIL: distinct seeds produced identical hash (${h1})" >&2
@@ -66,7 +92,7 @@ if [[ "$h1" == "$h3" ]]; then
 fi
 echo "ok: distinct-seed hash=${h3}"
 
-echo "[3/4] runtime guardrails"
+echo "[4/5] runtime guardrails"
 guards_out="$(
   GOMAXPROCS=8 GODEBUG="detsched=1,detschedseed=${SEED_A}" \
     "$GO_BIN" run "${REPO_ROOT}/tests/cmd/runtimeguards/main.go"
@@ -77,7 +103,7 @@ if [[ "$guards_out" != *"gomaxprocs=1 trace_guard=ok"* ]]; then
   exit 1
 fi
 
-echo "[4/4] scheduler fuzz exploration"
+echo "[5/5] scheduler fuzz exploration"
 pass_count=0
 fail_count=0
 for ((seed=1; seed<=40; seed++)); do
