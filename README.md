@@ -10,7 +10,9 @@ This repo distributes a patch and simple scripts so you can build a patched Go t
 - `patches/detsched.inline.patch`: inline edits to existing upstream Go files
 - `new-files/`: dedicated source tree for files that are entirely new to upstream Go
 - `scripts/compile-patch.sh`: compiles inline patch + `new-files/` into `detsched.git.patch`
-- `scripts/build.sh`: main script (apply + build + demo verify + optional install)
+- `scripts/build.sh`: main script (apply + build + patch tests + optional install)
+- `scripts/run-tests.sh`: concise external verification suite for patch behavior
+- `demos/`: demo docs/examples that are intentionally outside the Go source tree
 
 ## Patch maintenance workflow
 
@@ -45,10 +47,10 @@ GODEBUG=detsched=1,detschedfuzz=1,detschedseed=12345 go run ./your_program.go
 ## Common modes
 
 ```bash
-# Build + run demos, but do not install into --prefix
+# Build + run patch tests, but do not install into --prefix
 ./scripts/build.sh --go-tag go1.26.0 --no-install
 
-# Build only (skip demo verification)
+# Build only (skip patch tests)
 ./scripts/build.sh --go-tag go1.26.0 --no-verify
 ```
 
@@ -57,7 +59,7 @@ By default, `build.sh` does:
 - apply check
 - patch apply
 - `make.bash`
-- `misc/detscheddemo/run_all_demos.sh` (seed + stress + synctest + fuzz race)
+- `scripts/run-tests.sh` (seed reproducibility, guardrails, fuzz exploration)
 - install to `--prefix` (unless `--no-install`)
 
 The patch file is the canonical apply artifact for consumers.
@@ -66,14 +68,14 @@ The patch file is the canonical apply artifact for consumers.
 
 | Detsched Repo Tag | Upstream Go Tag | Status |
 |---|---|---|
-| (unreleased) | `go1.26.0` | Verified: patch apply + build + `run_all_demos.sh` |
+| (unreleased) | `go1.26.0` | Verified: patch apply + build + `run-tests.sh` |
 
 Verification contract:
 
 1. `git apply --check` succeeds.
 2. Patch applies cleanly.
 3. `src/make.bash` succeeds.
-4. `misc/detscheddemo/run_all_demos.sh` succeeds.
+4. `scripts/run-tests.sh` succeeds against the patched toolchain.
 
 ## Feature details
 
@@ -134,30 +136,20 @@ Deterministic-mode defaults:
    - `src/runtime/trace.go`
    - `src/runtime/cpuprof.go`
 
-### Demos maintained
+### Test coverage
 
-In `misc/detscheddemo`:
+Patch verification lives outside the Go source tree in `tests/` and is run by
+`scripts/run-tests.sh`. The suite is intentionally concise and verifies:
 
-- `run_seed_demo.sh`
-- `run_stress_demo.sh`
-- `run_synctest_demo.sh`
-- `run_fuzz_race_demo.sh`
-- `run_all_demos.sh`
+- same seed => same workload hash
+- different seed => different workload hash
+- deterministic-mode guardrails (startup `GOMAXPROCS=1`, trace blocked)
+- fuzz mode explores schedule space (bounded scan contains both pass and fail)
 
-Stress demo (`stress_demo.go`) is the high-intensity integration test:
+### Demos
 
-- hundreds of goroutines
-- more than 1M `runtime.Gosched` yields in default config
-- mixed select/map/timer/alloc/GC pressure behavior in one run
-
-Fuzzer race demo (`fuzz_race_demo.go`) demonstrates seed-based interleaving exploration:
-
-- scans seed ranges to discover a failing interleaving
-- reruns that exact failing seed to prove reproducibility
-
-```bash
-misc/detscheddemo/run_fuzz_race_demo.sh 1 200
-```
+Human-oriented demos are in `demos/` and can be moved to another repo without
+changing patch compilation or CI test flow.
 
 ### Applying patch manually
 

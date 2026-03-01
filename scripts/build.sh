@@ -17,7 +17,7 @@ Options:
   --prefix <path>      Install prefix for patched GOROOT
   --workdir <path>     Build workspace (default: mktemp dir)
   --patch <path>       Patch file (default: repo-root/detsched.git.patch)
-  --no-verify          Skip demo verification run
+  --no-verify          Skip patch verification tests
   --no-install         Build+verify but do not install to prefix
   -h, --help           Show help
 EOF
@@ -56,7 +56,7 @@ fi
 echo "Using workdir: $WORKDIR"
 echo "Target tag: $GO_TAG"
 echo "Patch: $PATCH_FILE"
-echo "Verify demos: $VERIFY"
+echo "Verify tests: $VERIFY"
 echo "Install: $INSTALL"
 if [[ "$INSTALL" -eq 1 ]]; then
   echo "Install prefix: $PREFIX"
@@ -72,7 +72,7 @@ git clone --depth 1 --branch "$GO_TAG" https://go.googlesource.com/go "$SRC_DIR"
   git apply "$PATCH_FILE"
   (cd src && ./make.bash)
   if [[ "$VERIFY" -eq 1 ]]; then
-    (cd misc/detscheddemo && ./run_all_demos.sh)
+    "${REPO_ROOT}/scripts/run-tests.sh" --go "${SRC_DIR}/bin/go"
   fi
 )
 
