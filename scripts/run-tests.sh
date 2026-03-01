@@ -58,6 +58,12 @@ run_seedhash() {
     "$SEEDHASH_BIN" -workers=64 -iters=2000 -procs=1
 }
 
+run_seedhash_dump() {
+  local seed="$1"
+  GODEBUG="detsched=1,detschedseed=${seed}" \
+    "$SEEDHASH_BIN" -workers=64 -iters=2000 -procs=1 -dump-order
+}
+
 run_seedhash_wallclock() {
   local seed="$1"
   GODEBUG="detsched=1,detschedseed=${seed}" \
@@ -70,6 +76,13 @@ h1="$(run_seedhash "$SEED_A")"
 h2="$(run_seedhash "$SEED_A")"
 if [[ "$h1" != "$h2" ]]; then
   echo "FAIL: same seed produced different hashes (${h1} vs ${h2})" >&2
+  echo "diagnostic: capturing receive-order transcripts for mismatch..." >&2
+  d1="$(run_seedhash_dump "$SEED_A")"
+  d2="$(run_seedhash_dump "$SEED_A")"
+  echo "diagnostic: run1" >&2
+  echo "$d1" >&2
+  echo "diagnostic: run2" >&2
+  echo "$d2" >&2
   exit 1
 fi
 echo "ok: same-seed hash=${h1}"
