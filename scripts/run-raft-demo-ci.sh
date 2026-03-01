@@ -6,7 +6,9 @@ SEED="${SEED:-7}"
 LOG_DIR=""
 TIMEOUT_SECS="${TIMEOUT_SECS:-120}"
 SEED_START="${SEED_START:-1}"
-SEED_COUNT="${SEED_COUNT:-3}"
+SEED_COUNT="${SEED_COUNT:-8}"
+NODES="${NODES:-5}"
+ROUNDS="${ROUNDS:-6}"
 
 usage() {
   cat <<'EOF'
@@ -19,7 +21,9 @@ Options:
   --go <path>        Go binary to use (default: go from PATH)
   --seed <n>         Back-compat alias for --seed-start (default: 7 if used)
   --seed-start <n>   First seed in deterministic sweep (default: 1)
-  --seed-count <n>   Number of seeds to test per scenario (default: 3)
+  --seed-count <n>   Number of seeds to test per scenario (default: 8)
+  --nodes <n>        Number of Raft nodes for scenarios (default: 5)
+  --rounds <n>       Proposal rounds for append scenarios (default: 6)
   --log-dir <path>   Directory for detailed logs (required)
   --timeout <sec>    Total go test timeout in seconds (default: 120)
   -h, --help         Show help
@@ -32,6 +36,8 @@ while [[ $# -gt 0 ]]; do
     --seed) SEED="$2"; SEED_START="$2"; shift 2 ;;
     --seed-start) SEED_START="$2"; shift 2 ;;
     --seed-count) SEED_COUNT="$2"; shift 2 ;;
+    --nodes) NODES="$2"; shift 2 ;;
+    --rounds) ROUNDS="$2"; shift 2 ;;
     --log-dir) LOG_DIR="$2"; shift 2 ;;
     --timeout) TIMEOUT_SECS="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -53,6 +59,14 @@ if ! [[ "$SEED_START" =~ ^[0-9]+$ ]] || [[ "$SEED_START" -le 0 ]]; then
 fi
 if ! [[ "$SEED_COUNT" =~ ^[0-9]+$ ]] || [[ "$SEED_COUNT" -le 0 ]]; then
   echo "error: --seed-count must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "$NODES" =~ ^[0-9]+$ ]] || [[ "$NODES" -lt 3 ]]; then
+  echo "error: --nodes must be an integer >= 3" >&2
+  exit 1
+fi
+if ! [[ "$ROUNDS" =~ ^[0-9]+$ ]] || [[ "$ROUNDS" -le 0 ]]; then
+  echo "error: --rounds must be a positive integer" >&2
   exit 1
 fi
 
@@ -78,6 +92,8 @@ echo "== Raft demo deterministic CI checks =="
 echo "go_bin=${GO_BIN}"
 echo "seed_start=${SEED_START}"
 echo "seed_count=${SEED_COUNT}"
+echo "nodes=${NODES}"
+echo "rounds=${ROUNDS}"
 echo "logs=${LOG_DIR}"
 echo "timeout_sec=${TIMEOUT_SECS}"
 warm_modules
@@ -110,8 +126,8 @@ set +e
     GODEBUG="detsched=1,detschedseed=1" \
     RAFTSIM_SEED_START="${SEED_START}" \
     RAFTSIM_SEED_COUNT="${SEED_COUNT}" \
-    RAFTSIM_NODES=5 \
-    RAFTSIM_ROUNDS=4 \
+    RAFTSIM_NODES="${NODES}" \
+    RAFTSIM_ROUNDS="${ROUNDS}" \
     "$TEST_BIN" -test.v -test.run TestSynctestDeterministicRepro
 ) > "$OUT_FILE" 2>&1
 status=$?
@@ -139,8 +155,8 @@ set +e
     "$GO_BIN" run ./cmd/raftsim \
       --scenario split_vote \
       --seed 7 \
-      --nodes 5 \
-      --rounds 2 \
+      --nodes "${NODES}" \
+      --rounds "${ROUNDS}" \
       --synctest=false
 ) > "$DETSCHED_OUT" 2>&1
 status=$?
