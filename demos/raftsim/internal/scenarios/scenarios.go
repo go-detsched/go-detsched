@@ -496,18 +496,7 @@ func runVoteNoLogCheck(cfg RunConfig) (Result, error) {
 		_ = cluster.Propose(ctx, leaderID, fmt.Sprintf("vote-log-check-%d", i))
 	}
 
-	targetID := ""
-	candidateID := ""
-	for _, id := range nodeIDs {
-		if id != leaderID && targetID == "" {
-			targetID = id
-			continue
-		}
-		if id != targetID {
-			candidateID = id
-			break
-		}
-	}
+	targetID, candidateID := pickVotePair(nodeIDs, leaderID)
 	if targetID == "" || candidateID == "" {
 		return Result{}, fmt.Errorf("unable to choose target/candidate for %s", ScenarioVoteNoLogCheck)
 	}
@@ -580,18 +569,7 @@ func runVoteComparator(cfg RunConfig) (Result, error) {
 		_ = cluster.Propose(ctx, leaderID, fmt.Sprintf("vote-comparator-%d", i))
 	}
 
-	targetID := ""
-	candidateID := ""
-	for _, id := range nodeIDs {
-		if id != leaderID && targetID == "" {
-			targetID = id
-			continue
-		}
-		if id != targetID {
-			candidateID = id
-			break
-		}
-	}
+	targetID, candidateID := pickVotePair(nodeIDs, leaderID)
 	if targetID == "" || candidateID == "" {
 		return Result{}, fmt.Errorf("unable to choose target/candidate for %s", ScenarioVoteComparator)
 	}
@@ -831,6 +809,21 @@ func makeNodeIDs(n int) []string {
 		ids[i] = fmt.Sprintf("n%d", i+1)
 	}
 	return ids
+}
+
+func pickVotePair(nodeIDs []string, leaderID string) (targetID, candidateID string) {
+	for _, id := range nodeIDs {
+		if id == leaderID {
+			continue
+		}
+		if targetID == "" {
+			targetID = id
+			continue
+		}
+		candidateID = id
+		break
+	}
+	return targetID, candidateID
 }
 
 func max(a, b int) int {
