@@ -11,6 +11,7 @@ ROUNDS="${ROUNDS:-4}"
 GO_TAG="${GO_TAG:-go1.26.0}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 SCENARIO_TIMEOUT_SECS="${SCENARIO_TIMEOUT_SECS:-90}"
+BUILD_TIMEOUT_SECS="${BUILD_TIMEOUT_SECS:-120}"
 
 usage() {
   cat <<'EOF'
@@ -29,6 +30,8 @@ Options:
   --rounds <n>         Proposal rounds (default: 4)
   --scenario-timeout <sec>
                       Timeout for each vulnerable/fixed scenario run (default: 90)
+  --build-timeout <sec>
+                      Timeout for each stage binary build (default: 120)
   --work-dir <path>    Existing work directory (default: mktemp)
   --log-dir <path>     Log output directory (required)
   -h, --help           Show help
@@ -43,6 +46,7 @@ while [[ $# -gt 0 ]]; do
     --nodes) NODES="$2"; shift 2 ;;
     --rounds) ROUNDS="$2"; shift 2 ;;
     --scenario-timeout) SCENARIO_TIMEOUT_SECS="$2"; shift 2 ;;
+    --build-timeout) BUILD_TIMEOUT_SECS="$2"; shift 2 ;;
     --work-dir) WORK_DIR="$2"; shift 2 ;;
     --log-dir) LOG_DIR="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -68,6 +72,10 @@ if ! [[ "$ROUNDS" =~ ^[0-9]+$ ]] || [[ "$ROUNDS" -le 0 ]]; then
 fi
 if ! [[ "$SCENARIO_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || [[ "$SCENARIO_TIMEOUT_SECS" -le 0 ]]; then
   echo "error: --scenario-timeout must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "$BUILD_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || [[ "$BUILD_TIMEOUT_SECS" -le 0 ]]; then
+  echo "error: --build-timeout must be a positive integer" >&2
   exit 1
 fi
 
@@ -162,6 +170,7 @@ echo "seed=${SEED}"
 echo "nodes=${NODES}"
 echo "rounds=${ROUNDS}"
 echo "scenario_timeout_sec=${SCENARIO_TIMEOUT_SECS}"
+echo "build_timeout_sec=${BUILD_TIMEOUT_SECS}"
 
 summary_file="${LOG_DIR}/patch_series_summary.log"
 executed_stages=0
@@ -170,6 +179,7 @@ executed_stages=0
   echo "nodes=${NODES}"
   echo "rounds=${ROUNDS}"
   echo "scenario_timeout_sec=${SCENARIO_TIMEOUT_SECS}"
+  echo "build_timeout_sec=${BUILD_TIMEOUT_SECS}"
   echo "stages_file=${STAGES_FILE}"
 } > "$summary_file"
 script_start_epoch="$(date +%s)"
@@ -198,9 +208,38 @@ if [[ "$mod_status" -ne 0 ]]; then
   exit "$mod_status"
 fi
 
+RAFTSIM_BIN="${WORK_REPO}/demos/raftsim/.bin/raftsim"
+
+build_raftsim_binary() {
+  local build_log
+  build_log="$1"
+  set +e
+  (
+    cd "${WORK_REPO}/demos/raftsim"
+    mkdir -p .bin
+    timeout "${BUILD_TIMEOUT_SECS}s" env \
+      GOMODCACHE="${CACHE_ROOT}/mod" \
+      GOCACHE="${CACHE_ROOT}/build" \
+      "$GO_BIN" build -o "$RAFTSIM_BIN" ./cmd/raftsim
+  ) > "$build_log" 2>&1
+  local build_status=$?
+  set -e
+  if [[ "$build_status" -eq 124 ]]; then
+    echo "error: raftsim build timed out after ${BUILD_TIMEOUT_SECS}s" >&2
+    rg -n "." "$build_log" -m 120 >&2 || true
+    exit 124
+  fi
+  if [[ "$build_status" -ne 0 ]]; then
+    echo "error: raftsim build failed" >&2
+    rg -n "." "$build_log" -m 120 >&2 || true
+    exit "$build_status"
+  fi
+}
+
 run_stage() {
   local step scenario patch bug_issue fixed_issue description
   local bug_log fixed_log patch_path
+  local bug_build_log fixed_build_log
   local stage_start bug_start fixed_start stage_end
   local bug_elapsed fixed_elapsed stage_elapsed
   step="$1"
@@ -213,8 +252,11 @@ run_stage() {
   echo "-- stage=${step} scenario=${scenario} patch=${patch} description=${description}"
   bug_log="${LOG_DIR}/stage-${step}-${scenario}-bug.log"
   fixed_log="${LOG_DIR}/stage-${step}-${scenario}-fixed.log"
+  bug_build_log="${LOG_DIR}/stage-${step}-${scenario}-bug-build.log"
+  fixed_build_log="${LOG_DIR}/stage-${step}-${scenario}-fixed-build.log"
   patch_path="${WORK_REPO}/demos/raftsim/patch-series/${patch}"
 
+  build_raftsim_binary "$bug_build_log"
   stage_start="$(date +%s)"
   set +e
   bug_start="$(date +%s)"
@@ -222,9 +264,7 @@ run_stage() {
     cd "${WORK_REPO}/demos/raftsim"
     timeout "${SCENARIO_TIMEOUT_SECS}s" env \
       GODEBUG="detsched=1,detschedseed=${SEED}" \
-      GOMODCACHE="${CACHE_ROOT}/mod" \
-      GOCACHE="${CACHE_ROOT}/build" \
-      "$GO_BIN" run ./cmd/raftsim \
+      "$RAFTSIM_BIN" \
       --scenario "${scenario}" \
       --seed "${SEED}" \
       --nodes "${NODES}" \
@@ -261,6 +301,7 @@ run_stage() {
     exit 1
   fi
   apply_stage_patch "$step" "$patch_path"
+  build_raftsim_binary "$fixed_build_log"
 
   set +e
   fixed_start="$(date +%s)"
@@ -268,9 +309,7 @@ run_stage() {
     cd "${WORK_REPO}/demos/raftsim"
     timeout "${SCENARIO_TIMEOUT_SECS}s" env \
       GODEBUG="detsched=1,detschedseed=${SEED}" \
-      GOMODCACHE="${CACHE_ROOT}/mod" \
-      GOCACHE="${CACHE_ROOT}/build" \
-      "$GO_BIN" run ./cmd/raftsim \
+      "$RAFTSIM_BIN" \
       --scenario "${scenario}" \
       --seed "${SEED}" \
       --nodes "${NODES}" \
