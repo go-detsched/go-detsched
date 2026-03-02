@@ -86,7 +86,7 @@ jobs:
           status=${PIPESTATUS[0]}
           set -e
           if [[ "$status" -eq 124 ]]; then
-            echo "instructional patch-series checks exceeded 300s timeout" >&2
+            echo "instructional patch-series checks exited with timeout status (see patch-series logs for stage-level timeout details)" >&2
             exit 124
           fi
           if [[ "$status" -ne 0 ]]; then

@@ -230,7 +230,7 @@ run_stage() {
       --nodes "${NODES}" \
       --rounds "${ROUNDS}" \
       --expect-bug=true \
-      --synctest=true
+      --synctest=false
   ) > "$bug_log" 2>&1
   local bug_status=$?
   set -e
@@ -276,7 +276,7 @@ run_stage() {
       --nodes "${NODES}" \
       --rounds "${ROUNDS}" \
       --expect-bug=false \
-      --synctest=true
+      --synctest=false
   ) > "$fixed_log" 2>&1
   local fixed_status=$?
   set -e
