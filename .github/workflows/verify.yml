@@ -78,7 +78,8 @@ jobs:
           set +e
           timeout 300s ./scripts/run-raft-patch-series-ci.sh \
             --go "$GO_DETSCHED_WORKDIR/go-src/bin/go" \
-            --seed 7 \
+            --seed-start 1 \
+            --seed-count 100 \
             --nodes 5 \
             --rounds 6 \
             --scenario-timeout 45 \

@@ -56,6 +56,16 @@ GODEBUG=detsched=1,detschedseed=7 "$GO_BIN" run ./cmd/raftsim --scenario stale_l
 GODEBUG=detsched=1,detschedseed=7 "$GO_BIN" run ./cmd/raftsim --scenario stale_leader --expect-bug=false
 ```
 
+Each run also reports oracle verdict fields:
+
+- `oracle_passed=true|false`
+- `oracle_violations=<count>`
+- `oracle_first=<first_violation_code|none>`
+
+The oracle is scenario-independent and checks core Raft safety invariants
+(single leader per term, valid/contiguous logs, committed-entry consistency,
+and majority-replication for committed indexes).
+
 ## Why `synctest`
 
 By default, CLI runs can be wrapped in `testing/synctest` (`--synctest=true`),
@@ -102,7 +112,7 @@ Each stage preserves one explicit fix step:
 Run the full staged proof locally:
 
 ```bash
-./scripts/run-raft-patch-series-ci.sh --go "$GO_BIN" --seed 7 --nodes 5 --rounds 6 --log-dir ./ci-logs/patch-series
+./scripts/run-raft-patch-series-ci.sh --go "$GO_BIN" --seed-start 1 --seed-count 100 --nodes 5 --rounds 6 --log-dir ./ci-logs/patch-series
 ```
 
 ## CI End-to-End Determinism Checks
@@ -132,5 +142,5 @@ The log directory contains per-scenario run logs and summary diffs for debugging
 For bug-then-fix instructional checks, CI also runs:
 
 ```bash
-./scripts/run-raft-patch-series-ci.sh --go "$GO_DETSCHED_WORKDIR/go-src/bin/go" --seed 7 --nodes 5 --rounds 6 --log-dir ./ci-logs/patch-series
+./scripts/run-raft-patch-series-ci.sh --go "$GO_DETSCHED_WORKDIR/go-src/bin/go" --seed-start 1 --seed-count 100 --nodes 5 --rounds 6 --log-dir ./ci-logs/patch-series
 ```

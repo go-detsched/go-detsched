@@ -5,7 +5,8 @@ GO_BIN="${GO_BIN:-}"
 RELEASE_TAG="${RELEASE_TAG:-latest}"
 LOG_DIR=""
 WORK_DIR=""
-SEED="${SEED:-7}"
+SEED_START="${SEED_START:-1}"
+SEED_COUNT="${SEED_COUNT:-100}"
 NODES="${NODES:-5}"
 ROUNDS="${ROUNDS:-4}"
 GO_TAG="${GO_TAG:-go1.26.0}"
@@ -25,7 +26,9 @@ Runs the instructional Raft patch series:
 Options:
   --go <path>          Use this Go binary (skip release download)
   --release-tag <tag>  Release tag to download (default: latest)
-  --seed <n>           Deterministic seed (default: 7)
+  --seed <n>           Back-compat alias for --seed-start and --seed-count 1
+  --seed-start <n>     First deterministic seed (default: 1)
+  --seed-count <n>     Number of seeds per stage/mode (default: 100)
   --nodes <n>          Raft node count (default: 5)
   --rounds <n>         Proposal rounds (default: 4)
   --scenario-timeout <sec>
@@ -42,7 +45,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --go) GO_BIN="$2"; shift 2 ;;
     --release-tag) RELEASE_TAG="$2"; shift 2 ;;
-    --seed) SEED="$2"; shift 2 ;;
+    --seed) SEED_START="$2"; SEED_COUNT=1; shift 2 ;;
+    --seed-start) SEED_START="$2"; shift 2 ;;
+    --seed-count) SEED_COUNT="$2"; shift 2 ;;
     --nodes) NODES="$2"; shift 2 ;;
     --rounds) ROUNDS="$2"; shift 2 ;;
     --scenario-timeout) SCENARIO_TIMEOUT_SECS="$2"; shift 2 ;;
@@ -58,8 +63,12 @@ if [[ -z "$LOG_DIR" ]]; then
   echo "error: --log-dir is required" >&2
   exit 1
 fi
-if ! [[ "$SEED" =~ ^[0-9]+$ ]] || [[ "$SEED" -le 0 ]]; then
-  echo "error: --seed must be a positive integer" >&2
+if ! [[ "$SEED_START" =~ ^[0-9]+$ ]] || [[ "$SEED_START" -le 0 ]]; then
+  echo "error: --seed-start must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "$SEED_COUNT" =~ ^[0-9]+$ ]] || [[ "$SEED_COUNT" -le 0 ]]; then
+  echo "error: --seed-count must be a positive integer" >&2
   exit 1
 fi
 if ! [[ "$NODES" =~ ^[0-9]+$ ]] || [[ "$NODES" -lt 3 ]]; then
@@ -166,7 +175,8 @@ echo "== Raft instructional patch-series check =="
 echo "go_bin=${GO_BIN}"
 echo "log_dir=${LOG_DIR}"
 echo "work_repo=${WORK_REPO}"
-echo "seed=${SEED}"
+echo "seed_start=${SEED_START}"
+echo "seed_count=${SEED_COUNT}"
 echo "nodes=${NODES}"
 echo "rounds=${ROUNDS}"
 echo "scenario_timeout_sec=${SCENARIO_TIMEOUT_SECS}"
@@ -176,7 +186,8 @@ summary_file="${LOG_DIR}/patch_series_summary.log"
 events_file="${LOG_DIR}/patch_series_events.log"
 executed_stages=0
 {
-  echo "seed=${SEED}"
+  echo "seed_start=${SEED_START}"
+  echo "seed_count=${SEED_COUNT}"
   echo "nodes=${NODES}"
   echo "rounds=${ROUNDS}"
   echo "scenario_timeout_sec=${SCENARIO_TIMEOUT_SECS}"
@@ -260,12 +271,112 @@ build_raftsim_binary() {
   fi
 }
 
+SWEEP_EXPECTED_HITS=0
+SWEEP_FORBIDDEN_HITS=0
+SWEEP_ORACLE_FAILS=0
+SWEEP_PASS_COUNT=0
+SWEEP_FAIL_COUNT=0
+
+run_seed_sweep() {
+  local step scenario mode expect_bug expected_issue forbidden_issue
+  local stats_file
+  local seed seed_end i seed_log run_start run_elapsed run_status issue oracle_passed oracle_first rc
+  declare -A issue_counts
+  declare -A oracle_counts
+
+  step="$1"
+  scenario="$2"
+  mode="$3"
+  expect_bug="$4"
+  expected_issue="$5"
+  forbidden_issue="$6"
+  stats_file="${LOG_DIR}/stage-${step}-${scenario}-${mode}-stats.log"
+  : > "$stats_file"
+
+  SWEEP_EXPECTED_HITS=0
+  SWEEP_FORBIDDEN_HITS=0
+  SWEEP_ORACLE_FAILS=0
+  SWEEP_PASS_COUNT=0
+  SWEEP_FAIL_COUNT=0
+
+  seed_end=$((SEED_START + SEED_COUNT - 1))
+  for ((seed=SEED_START, i=1; seed<=seed_end; seed++, i++)); do
+    seed_log="${LOG_DIR}/stage-${step}-${scenario}-${mode}-seed-${seed}.log"
+    log_event info "seed_iteration_start" "stage=${step} mode=${mode} iteration=${i}/${SEED_COUNT} seed=${seed}"
+    run_start="$(date +%s)"
+    set +e
+    (
+      cd "${WORK_REPO}/demos/raftsim"
+      timeout "${SCENARIO_TIMEOUT_SECS}s" env \
+        GODEBUG="detsched=1,detschedseed=${seed}" \
+        "$RAFTSIM_BIN" \
+        --scenario "${scenario}" \
+        --seed "${seed}" \
+        --nodes "${NODES}" \
+        --rounds "${ROUNDS}" \
+        --expect-bug="${expect_bug}" \
+        --synctest=true
+    ) > "$seed_log" 2>&1
+    rc=$?
+    set -e
+    run_elapsed="$(( $(date +%s) - run_start ))"
+
+    issue="UNKNOWN_ISSUE"
+    run_status="UNKNOWN_STATUS"
+    oracle_passed="unknown"
+    oracle_first="unknown"
+    if [[ -s "$seed_log" ]]; then
+      issue="$(sed -n 's/.* issue=\([^ ]*\).*/\1/p' "$seed_log" | head -n 1)"
+      run_status="$(sed -n 's/.* status=\([^ ]*\).*/\1/p' "$seed_log" | head -n 1)"
+      oracle_passed="$(sed -n 's/.* oracle_passed=\([^ ]*\).*/\1/p' "$seed_log" | head -n 1)"
+      oracle_first="$(sed -n 's/.* oracle_first=\([^ ]*\).*/\1/p' "$seed_log" | head -n 1)"
+      [[ -z "$issue" ]] && issue="UNKNOWN_ISSUE"
+      [[ -z "$run_status" ]] && run_status="UNKNOWN_STATUS"
+      [[ -z "$oracle_passed" ]] && oracle_passed="unknown"
+      [[ -z "$oracle_first" ]] && oracle_first="unknown"
+    fi
+
+    issue_counts["$issue"]=$(( ${issue_counts["$issue"]:-0} + 1 ))
+    if [[ "$issue" == "$expected_issue" ]]; then
+      SWEEP_EXPECTED_HITS=$((SWEEP_EXPECTED_HITS + 1))
+    fi
+    if [[ -n "$forbidden_issue" && "$issue" == "$forbidden_issue" ]]; then
+      SWEEP_FORBIDDEN_HITS=$((SWEEP_FORBIDDEN_HITS + 1))
+    fi
+    if [[ "$oracle_passed" == "false" ]]; then
+      SWEEP_ORACLE_FAILS=$((SWEEP_ORACLE_FAILS + 1))
+      oracle_counts["$oracle_first"]=$(( ${oracle_counts["$oracle_first"]:-0} + 1 ))
+    fi
+    if [[ "$run_status" == "PASS" ]]; then
+      SWEEP_PASS_COUNT=$((SWEEP_PASS_COUNT + 1))
+    else
+      SWEEP_FAIL_COUNT=$((SWEEP_FAIL_COUNT + 1))
+    fi
+
+    echo "seed=${seed} iter=${i}/${SEED_COUNT} mode=${mode} rc=${rc} elapsed_sec=${run_elapsed} status=${run_status} issue=${issue} oracle_passed=${oracle_passed} oracle_first=${oracle_first}" >> "$stats_file"
+    log_event info "seed_iteration_complete" "stage=${step} mode=${mode} iteration=${i}/${SEED_COUNT} seed=${seed} rc=${rc} elapsed_sec=${run_elapsed} status=${run_status} issue=${issue} oracle_passed=${oracle_passed} oracle_first=${oracle_first}"
+  done
+
+  {
+    echo "summary mode=${mode} expected_issue=${expected_issue} expected_hits=${SWEEP_EXPECTED_HITS}/${SEED_COUNT} forbidden_issue=${forbidden_issue:-none} forbidden_hits=${SWEEP_FORBIDDEN_HITS}/${SEED_COUNT} pass=${SWEEP_PASS_COUNT} fail=${SWEEP_FAIL_COUNT} oracle_fails=${SWEEP_ORACLE_FAILS}"
+    echo "issue_histogram_begin"
+    for k in "${!issue_counts[@]}"; do
+      echo "issue_count issue=${k} count=${issue_counts[$k]}"
+    done | sort
+    echo "issue_histogram_end"
+    echo "oracle_histogram_begin"
+    for k in "${!oracle_counts[@]}"; do
+      echo "oracle_count code=${k} count=${oracle_counts[$k]}"
+    done | sort
+    echo "oracle_histogram_end"
+  } >> "$stats_file"
+}
+
 run_stage() {
   local step scenario patch bug_issue fixed_issue description
-  local bug_log fixed_log patch_path
-  local bug_build_log fixed_build_log
-  local stage_start bug_start fixed_start stage_end patch_start
-  local bug_elapsed fixed_elapsed stage_elapsed patch_elapsed
+  local bug_build_log fixed_build_log patch_path
+  local stage_start stage_end patch_start patch_elapsed stage_elapsed
+  local bug_hits fixed_hits fixed_bug_hits bug_oracle_fails fixed_oracle_fails
   step="$1"
   scenario="$2"
   patch="$3"
@@ -275,51 +386,15 @@ run_stage() {
 
   echo "-- stage=${step} scenario=${scenario} patch=${patch} description=${description}"
   log_event info "stage_iteration_start" "iteration=${step}/${stage_total} scenario=${scenario} patch=${patch}"
-  bug_log="${LOG_DIR}/stage-${step}-${scenario}-bug.log"
-  fixed_log="${LOG_DIR}/stage-${step}-${scenario}-fixed.log"
   bug_build_log="${LOG_DIR}/stage-${step}-${scenario}-bug-build.log"
   fixed_build_log="${LOG_DIR}/stage-${step}-${scenario}-fixed-build.log"
   patch_path="${WORK_REPO}/demos/raftsim/patch-series/${patch}"
 
-  build_raftsim_binary "$step" "bug" "$bug_build_log"
   stage_start="$(date +%s)"
-  set +e
-  bug_start="$(date +%s)"
-  (
-    cd "${WORK_REPO}/demos/raftsim"
-    timeout "${SCENARIO_TIMEOUT_SECS}s" env \
-      GODEBUG="detsched=1,detschedseed=${SEED}" \
-      "$RAFTSIM_BIN" \
-      --scenario "${scenario}" \
-      --seed "${SEED}" \
-      --nodes "${NODES}" \
-      --rounds "${ROUNDS}" \
-      --expect-bug=true \
-      --synctest=false
-  ) > "$bug_log" 2>&1
-  local bug_status=$?
-  set -e
-  bug_elapsed="$(( $(date +%s) - bug_start ))"
-  if [[ "$bug_status" -eq 124 ]]; then
-    echo "error: vulnerable scenario timed out after ${SCENARIO_TIMEOUT_SECS}s (stage=${step} scenario=${scenario})" >&2
-    rg -n "." "$bug_log" -m 120 >&2 || true
-    exit 124
-  fi
-  if [[ "$bug_status" -ne 0 ]]; then
-    echo "error: vulnerable stage failed unexpectedly (stage=${step} scenario=${scenario})" >&2
-    rg -n "." "$bug_log" -m 80 >&2 || true
-    exit "$bug_status"
-  fi
-  if ! rg -q "status=PASS" "$bug_log"; then
-    echo "error: vulnerable stage did not report PASS (stage=${step} scenario=${scenario})" >&2
-    rg -n "." "$bug_log" -m 80 >&2 || true
-    exit 1
-  fi
-  if ! rg -q "issue=${bug_issue}" "$bug_log"; then
-    echo "error: vulnerable stage missing expected issue code ${bug_issue}" >&2
-    rg -n "." "$bug_log" -m 80 >&2 || true
-    exit 1
-  fi
+  build_raftsim_binary "$step" "bug" "$bug_build_log"
+  run_seed_sweep "$step" "$scenario" "bug" "true" "$bug_issue" ""
+  bug_hits="$SWEEP_EXPECTED_HITS"
+  bug_oracle_fails="$SWEEP_ORACLE_FAILS"
 
   if [[ ! -f "$patch_path" ]]; then
     echo "error: stage patch file missing: $patch_path" >&2
@@ -329,54 +404,30 @@ run_stage() {
   apply_stage_patch "$step" "$patch_path"
   patch_elapsed="$(( $(date +%s) - patch_start ))"
   log_event info "patch_apply_complete" "stage=${step} elapsed_sec=${patch_elapsed} patch=${patch}"
-  build_raftsim_binary "$step" "fixed" "$fixed_build_log"
 
-  set +e
-  fixed_start="$(date +%s)"
-  (
-    cd "${WORK_REPO}/demos/raftsim"
-    timeout "${SCENARIO_TIMEOUT_SECS}s" env \
-      GODEBUG="detsched=1,detschedseed=${SEED}" \
-      "$RAFTSIM_BIN" \
-      --scenario "${scenario}" \
-      --seed "${SEED}" \
-      --nodes "${NODES}" \
-      --rounds "${ROUNDS}" \
-      --expect-bug=false \
-      --synctest=false
-  ) > "$fixed_log" 2>&1
-  local fixed_status=$?
-  set -e
-  fixed_elapsed="$(( $(date +%s) - fixed_start ))"
-  if [[ "$fixed_status" -eq 124 ]]; then
-    echo "error: fixed scenario timed out after ${SCENARIO_TIMEOUT_SECS}s (stage=${step} scenario=${scenario})" >&2
-    rg -n "." "$fixed_log" -m 120 >&2 || true
-    exit 124
-  fi
-  if [[ "$fixed_status" -ne 0 ]]; then
-    echo "error: fixed stage failed (stage=${step} scenario=${scenario})" >&2
-    rg -n "." "$fixed_log" -m 80 >&2 || true
-    exit "$fixed_status"
-  fi
-  if ! rg -q "status=PASS" "$fixed_log"; then
-    echo "error: fixed stage did not report PASS (stage=${step} scenario=${scenario})" >&2
-    rg -n "." "$fixed_log" -m 80 >&2 || true
+  build_raftsim_binary "$step" "fixed" "$fixed_build_log"
+  run_seed_sweep "$step" "$scenario" "fixed" "false" "$fixed_issue" "$bug_issue"
+  fixed_hits="$SWEEP_EXPECTED_HITS"
+  fixed_bug_hits="$SWEEP_FORBIDDEN_HITS"
+  fixed_oracle_fails="$SWEEP_ORACLE_FAILS"
+
+  if [[ "$bug_hits" -eq 0 ]]; then
+    echo "error: bug sweep did not encounter expected issue ${bug_issue} for stage=${step}" >&2
     exit 1
   fi
-  if ! rg -q "issue=${fixed_issue}" "$fixed_log"; then
-    echo "error: fixed stage missing expected issue code ${fixed_issue}" >&2
-    rg -n "." "$fixed_log" -m 80 >&2 || true
+  if [[ "$fixed_oracle_fails" -ne 0 ]]; then
+    echo "error: fixed sweep reported oracle safety violations stage=${step} count=${fixed_oracle_fails}" >&2
     exit 1
   fi
-  if rg -q "issue=${bug_issue}" "$fixed_log"; then
-    echo "error: fixed stage still reports bug issue code ${bug_issue}" >&2
-    rg -n "." "$fixed_log" -m 80 >&2 || true
+  if [[ "$fixed_bug_hits" -ne 0 ]]; then
+    echo "error: fixed sweep still encountered bug issue ${bug_issue} stage=${step} count=${fixed_bug_hits}" >&2
     exit 1
   fi
+
   stage_end="$(date +%s)"
   stage_elapsed="$(( stage_end - stage_start ))"
-  echo "timing stage=${step} scenario=${scenario} bug_sec=${bug_elapsed} fixed_sec=${fixed_elapsed} total_sec=${stage_elapsed}" | tee -a "$summary_file"
-  log_event info "stage_iteration_complete" "iteration=${step}/${stage_total} scenario=${scenario} bug_sec=${bug_elapsed} fixed_sec=${fixed_elapsed} total_sec=${stage_elapsed}"
+  echo "timing stage=${step} scenario=${scenario} seeds=${SEED_COUNT} bug_expected_hits=${bug_hits} fixed_expected_hits=${fixed_hits} fixed_bug_hits=${fixed_bug_hits} bug_oracle_fails=${bug_oracle_fails} fixed_oracle_fails=${fixed_oracle_fails} total_sec=${stage_elapsed}" | tee -a "$summary_file"
+  log_event info "stage_iteration_complete" "iteration=${step}/${stage_total} scenario=${scenario} seeds=${SEED_COUNT} bug_expected_hits=${bug_hits} fixed_expected_hits=${fixed_hits} fixed_bug_hits=${fixed_bug_hits} bug_oracle_fails=${bug_oracle_fails} fixed_oracle_fails=${fixed_oracle_fails} total_sec=${stage_elapsed}"
 }
 
 replace_once() {

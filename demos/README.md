@@ -49,5 +49,5 @@ Run deterministic Raft CI-style checks (same-seed replay + issue assertions):
 Run instructional Raft bug-then-fix patch-series checks:
 
 ```bash
-./scripts/run-raft-patch-series-ci.sh --go "$GO_BIN" --seed 7 --nodes 5 --rounds 6 --log-dir ./ci-logs/patch-series
+./scripts/run-raft-patch-series-ci.sh --go "$GO_BIN" --seed-start 1 --seed-count 100 --nodes 5 --rounds 6 --log-dir ./ci-logs/patch-series
 ```

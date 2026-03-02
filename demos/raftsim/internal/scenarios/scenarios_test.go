@@ -24,13 +24,13 @@ func TestSynctestDeterministicRepro(t *testing.T) {
 			name := fmt.Sprintf("%s_seed_%d", scenario, seed)
 			t.Run(name, func(t *testing.T) {
 				cfg := RunConfig{
-					Scenario: scenario,
-					Seed:     seed,
-					Nodes:    nodes,
-					Rounds:   rounds,
+					Scenario:  scenario,
+					Seed:      seed,
+					Nodes:     nodes,
+					Rounds:    rounds,
 					ExpectBug: true,
-					Verbose:  false,
-					Synctest: true,
+					Verbose:   false,
+					Synctest:  true,
 				}
 
 				seedStartTime := time.Now()
@@ -50,28 +50,34 @@ func TestSynctestDeterministicRepro(t *testing.T) {
 				run2Dur := time.Since(run2Start)
 				seedDur := time.Since(seedStartTime)
 
-				if r1.IssueCode != r2.IssueCode || r1.EventHash != r2.EventHash || r1.Reason != r2.Reason || r1.Evidence != r2.Evidence || r1.BugObserved != r2.BugObserved || r1.Passed != r2.Passed {
+				if r1.IssueCode != r2.IssueCode || r1.EventHash != r2.EventHash || r1.Reason != r2.Reason || r1.Evidence != r2.Evidence || r1.BugObserved != r2.BugObserved || r1.Passed != r2.Passed || r1.OraclePassed != r2.OraclePassed || r1.OracleViolationCount != r2.OracleViolationCount || r1.OracleFirstViolation != r2.OracleFirstViolation {
 					t.Fatalf(
-						"non-deterministic replay scenario=%s seed=%d run1(status=%v bug=%v issue=%s hash=%s reason=%q evidence=%q) run2(status=%v bug=%v issue=%s hash=%s reason=%q evidence=%q)",
+						"non-deterministic replay scenario=%s seed=%d run1(status=%v bug=%v issue=%s hash=%s oracle=%v oracle_violations=%d oracle_first=%s reason=%q evidence=%q) run2(status=%v bug=%v issue=%s hash=%s oracle=%v oracle_violations=%d oracle_first=%s reason=%q evidence=%q)",
 						scenario,
 						seed,
 						r1.Passed,
 						r1.BugObserved,
 						r1.IssueCode,
 						r1.EventHash,
+						r1.OraclePassed,
+						r1.OracleViolationCount,
+						r1.OracleFirstViolation,
 						r1.Reason,
 						r1.Evidence,
 						r2.Passed,
 						r2.BugObserved,
 						r2.IssueCode,
 						r2.EventHash,
+						r2.OraclePassed,
+						r2.OracleViolationCount,
+						r2.OracleFirstViolation,
 						r2.Reason,
 						r2.Evidence,
 					)
 				}
 
 				t.Logf(
-					"scenario=%s seed=%d run_index=1 run_us=%d status=%s bug_observed=%t issue=%s hash=%s",
+					"scenario=%s seed=%d run_index=1 run_us=%d status=%s bug_observed=%t issue=%s hash=%s oracle_passed=%t oracle_violations=%d oracle_first=%s",
 					r1.Scenario,
 					r1.Seed,
 					run1Dur.Microseconds(),
@@ -79,9 +85,12 @@ func TestSynctestDeterministicRepro(t *testing.T) {
 					r1.BugObserved,
 					r1.IssueCode,
 					r1.EventHash,
+					r1.OraclePassed,
+					r1.OracleViolationCount,
+					r1.OracleFirstViolation,
 				)
 				t.Logf(
-					"scenario=%s seed=%d run_index=2 run_us=%d status=%s bug_observed=%t issue=%s hash=%s",
+					"scenario=%s seed=%d run_index=2 run_us=%d status=%s bug_observed=%t issue=%s hash=%s oracle_passed=%t oracle_violations=%d oracle_first=%s",
 					r2.Scenario,
 					r2.Seed,
 					run2Dur.Microseconds(),
@@ -89,9 +98,12 @@ func TestSynctestDeterministicRepro(t *testing.T) {
 					r2.BugObserved,
 					r2.IssueCode,
 					r2.EventHash,
+					r2.OraclePassed,
+					r2.OracleViolationCount,
+					r2.OracleFirstViolation,
 				)
 				t.Logf(
-					"scenario=%s seed=%d summary_us=%d status=%s bug_observed=%t issue=%s hash=%s reason=%q evidence=%q",
+					"scenario=%s seed=%d summary_us=%d status=%s bug_observed=%t issue=%s hash=%s oracle_passed=%t oracle_violations=%d oracle_first=%s reason=%q evidence=%q",
 					r1.Scenario,
 					r1.Seed,
 					seedDur.Microseconds(),
@@ -99,6 +111,9 @@ func TestSynctestDeterministicRepro(t *testing.T) {
 					r1.BugObserved,
 					r1.IssueCode,
 					r1.EventHash,
+					r1.OraclePassed,
+					r1.OracleViolationCount,
+					r1.OracleFirstViolation,
 					r1.Reason,
 					r1.Evidence,
 				)

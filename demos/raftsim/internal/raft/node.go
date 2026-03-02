@@ -125,6 +125,7 @@ type NodeSnapshot struct {
 	LeaderID    string
 	LogLength   int
 	CommitIndex int
+	Log         []LogEntry
 }
 
 func NewNode(cfg NodeConfig) (*Node, error) {
@@ -175,6 +176,8 @@ func (n *Node) Address() string {
 func (n *Node) Snapshot() NodeSnapshot {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	logCopy := make([]LogEntry, len(n.log))
+	copy(logCopy, n.log)
 	return NodeSnapshot{
 		ID:          n.id,
 		Term:        n.term,
@@ -182,6 +185,7 @@ func (n *Node) Snapshot() NodeSnapshot {
 		LeaderID:    n.leaderID,
 		LogLength:   len(n.log),
 		CommitIndex: n.commitIndex,
+		Log:         logCopy,
 	}
 }
 

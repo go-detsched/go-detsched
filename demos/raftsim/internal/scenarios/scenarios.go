@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,25 +22,29 @@ const (
 )
 
 type RunConfig struct {
-	Scenario string
-	Seed     int64
-	Nodes    int
-	Rounds   int
+	Scenario  string
+	Seed      int64
+	Nodes     int
+	Rounds    int
 	ExpectBug bool
-	Verbose  bool
-	Synctest bool
+	Verbose   bool
+	Synctest  bool
 }
 
 type Result struct {
-	Scenario    string
-	Seed        int64
-	Passed      bool
-	BugObserved bool
-	IssueCode   string
-	Reason      string
-	Evidence    string
-	EventHash   string
-	Events      []string
+	Scenario             string
+	Seed                 int64
+	Passed               bool
+	BugObserved          bool
+	IssueCode            string
+	Reason               string
+	Evidence             string
+	EventHash            string
+	Events               []string
+	OraclePassed         bool
+	OracleViolationCount int
+	OracleFirstViolation string
+	OracleViolations     []string
 }
 
 func Run(cfg RunConfig) (Result, error) {
@@ -157,7 +162,7 @@ func runSplitVote(cfg RunConfig) (Result, error) {
 			result.Evidence = "leader=none vote_requests=dropped timeout=4s"
 		}
 		result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
-		return result, nil
+		return withOracle(cluster, result), nil
 	}
 	result.BugObserved = false
 	if cfg.ExpectBug {
@@ -172,7 +177,7 @@ func runSplitVote(cfg RunConfig) (Result, error) {
 		result.Evidence = "leader=present vote_requests=dropped"
 	}
 	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
-	return result, nil
+	return withOracle(cluster, result), nil
 }
 
 func runStaleLeader(cfg RunConfig) (Result, error) {
@@ -233,7 +238,7 @@ func runStaleLeader(cfg RunConfig) (Result, error) {
 				result.Evidence = "event=bug_accept_stale follower_accepted_lower_term_append=true"
 			}
 			result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
-			return result, nil
+			return withOracle(cluster, result), nil
 		}
 	}
 	if cfg.ExpectBug {
@@ -248,7 +253,7 @@ func runStaleLeader(cfg RunConfig) (Result, error) {
 		result.Evidence = "event=bug_accept_stale missing"
 	}
 	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
-	return result, nil
+	return withOracle(cluster, result), nil
 }
 
 func runReorderCommit(cfg RunConfig) (Result, error) {
@@ -329,7 +334,7 @@ func runReorderCommit(cfg RunConfig) (Result, error) {
 			result.Evidence = fmt.Sprintf("commit=%d replicated=%d majority=%d", highestCommit, replicatedAtOrAbove, majority)
 		}
 		result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
-		return result, nil
+		return withOracle(cluster, result), nil
 	}
 	if cfg.ExpectBug {
 		result.Passed = false
@@ -343,7 +348,7 @@ func runReorderCommit(cfg RunConfig) (Result, error) {
 		result.Evidence = fmt.Sprintf("commit=%d replicated=%d majority=%d", highestCommit, replicatedAtOrAbove, majority)
 	}
 	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
-	return result, nil
+	return withOracle(cluster, result), nil
 }
 
 func runLogTruncation(cfg RunConfig) (Result, error) {
@@ -437,7 +442,7 @@ func runLogTruncation(cfg RunConfig) (Result, error) {
 		}
 		result.Evidence = fmt.Sprintf("target=%s before_len=%d after_len=%d resp_success=%t", followerID, beforeSnap.LogLength, afterSnap.LogLength, resp.Success)
 		result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
-		return result, nil
+		return withOracle(cluster, result), nil
 	}
 
 	if cfg.ExpectBug {
@@ -451,7 +456,7 @@ func runLogTruncation(cfg RunConfig) (Result, error) {
 	}
 	result.Evidence = fmt.Sprintf("target=%s before_len=%d after_len=%d resp_success=%t", followerID, beforeSnap.LogLength, afterSnap.LogLength, resp.Success)
 	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
-	return result, nil
+	return withOracle(cluster, result), nil
 }
 
 func startCluster(nodeIDs []string, seed int64, bugs raft.BugConfig) (*raft.Cluster, context.CancelFunc, error) {
@@ -496,6 +501,13 @@ func max(a, b int) int {
 	return b
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func runInSynctest(fn func()) error {
 	var panicErr error
 	done := make(chan struct{})
@@ -529,4 +541,129 @@ func scenarioTimeout(cfg RunConfig, normal, fast time.Duration) time.Duration {
 		return fast
 	}
 	return normal
+}
+
+func withOracle(cluster *raft.Cluster, result Result) Result {
+	violations := raftSafetyViolations(cluster.NodeSnapshots(), result.Events)
+	result.OraclePassed = len(violations) == 0
+	result.OracleViolationCount = len(violations)
+	result.OracleViolations = violations
+	result.OracleFirstViolation = "none"
+	if len(violations) > 0 {
+		result.OracleFirstViolation = violations[0]
+	}
+	return result
+}
+
+func raftSafetyViolations(snaps []raft.NodeSnapshot, events []string) []string {
+	violations := []string{}
+	if len(snaps) == 0 {
+		return []string{"ORACLE_EMPTY_CLUSTER"}
+	}
+
+	leadersByTerm := map[int]map[string]struct{}{}
+	for _, e := range events {
+		if !strings.Contains(e, "leader_elected") {
+			continue
+		}
+		term := parseIntKV(e, "term")
+		node := parseStringKV(e, "node")
+		if term <= 0 || node == "" {
+			continue
+		}
+		if _, ok := leadersByTerm[term]; !ok {
+			leadersByTerm[term] = map[string]struct{}{}
+		}
+		leadersByTerm[term][node] = struct{}{}
+	}
+	for term, leaders := range leadersByTerm {
+		if len(leaders) > 1 {
+			violations = append(violations, fmt.Sprintf("RAFT_SAFETY_MULTI_LEADER_TERM_%d", term))
+		}
+	}
+
+	for _, s := range snaps {
+		if s.CommitIndex < 0 || s.CommitIndex > len(s.Log) {
+			violations = append(violations, fmt.Sprintf("RAFT_SAFETY_INVALID_COMMIT_INDEX_%s", s.ID))
+		}
+		for pos, e := range s.Log {
+			expectedIndex := pos + 1
+			if e.Index != expectedIndex {
+				violations = append(violations, fmt.Sprintf("RAFT_SAFETY_NON_CONTIGUOUS_LOG_%s", s.ID))
+				break
+			}
+		}
+	}
+
+	majority := len(snaps)/2 + 1
+	for _, s := range snaps {
+		if s.CommitIndex <= 0 {
+			continue
+		}
+		replicated := 0
+		for _, other := range snaps {
+			if len(other.Log) >= s.CommitIndex {
+				replicated++
+			}
+		}
+		if replicated < majority {
+			violations = append(violations, fmt.Sprintf("RAFT_SAFETY_COMMIT_WITHOUT_MAJORITY_%s", s.ID))
+		}
+	}
+
+	for i := 0; i < len(snaps); i++ {
+		for j := i + 1; j < len(snaps); j++ {
+			a := snaps[i]
+			b := snaps[j]
+			limit := min(a.CommitIndex, b.CommitIndex)
+			for idx := 1; idx <= limit; idx++ {
+				ae := a.Log[idx-1]
+				be := b.Log[idx-1]
+				if ae.Term != be.Term || ae.Data != be.Data {
+					violations = append(violations, fmt.Sprintf("RAFT_SAFETY_COMMITTED_DIVERGENCE_IDX_%d", idx))
+					break
+				}
+			}
+		}
+	}
+
+	sort.Strings(violations)
+	return dedupeStrings(violations)
+}
+
+func parseIntKV(event, key string) int {
+	raw := parseStringKV(event, key)
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func parseStringKV(event, key string) string {
+	prefix := key + "="
+	for _, token := range strings.Fields(event) {
+		if strings.HasPrefix(token, prefix) {
+			return strings.TrimPrefix(token, prefix)
+		}
+	}
+	return ""
+}
+
+func dedupeStrings(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]string, 0, len(in))
+	last := ""
+	for i, s := range in {
+		if i == 0 || s != last {
+			out = append(out, s)
+			last = s
+		}
+	}
+	return out
 }

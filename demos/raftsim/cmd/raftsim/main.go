@@ -28,13 +28,13 @@ func main() {
 	exitCode := 0
 	for _, name := range names {
 		result, err := scenarios.Run(scenarios.RunConfig{
-			Scenario: name,
-			Seed:     *seed,
-			Nodes:    *nodes,
-			Rounds:   *rounds,
+			Scenario:  name,
+			Seed:      *seed,
+			Nodes:     *nodes,
+			Rounds:    *rounds,
 			ExpectBug: *expectBug,
-			Verbose:  *verbose,
-			Synctest: *useSynctest,
+			Verbose:   *verbose,
+			Synctest:  *useSynctest,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "scenario=%s seed=%d status=error err=%v\n", name, *seed, err)
@@ -46,13 +46,16 @@ func main() {
 			status = "PASS"
 		}
 		fmt.Printf(
-			"scenario=%s seed=%d status=%s bug_observed=%t issue=%s hash=%s reason=%q evidence=%q\n",
+			"scenario=%s seed=%d status=%s bug_observed=%t issue=%s hash=%s oracle_passed=%t oracle_violations=%d oracle_first=%s reason=%q evidence=%q\n",
 			result.Scenario,
 			result.Seed,
 			status,
 			result.BugObserved,
 			result.IssueCode,
 			result.EventHash,
+			result.OraclePassed,
+			result.OracleViolationCount,
+			result.OracleFirstViolation,
 			result.Reason,
 			result.Evidence,
 		)
