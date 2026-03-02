@@ -162,10 +162,13 @@ executed_stages=0
   echo "rounds=${ROUNDS}"
   echo "stages_file=${STAGES_FILE}"
 } > "$summary_file"
+script_start_epoch="$(date +%s)"
 
 run_stage() {
   local step scenario patch bug_issue fixed_issue description
   local bug_log fixed_log patch_path
+  local stage_start bug_start fixed_start stage_end
+  local bug_elapsed fixed_elapsed stage_elapsed
   step="$1"
   scenario="$2"
   patch="$3"
@@ -178,7 +181,9 @@ run_stage() {
   fixed_log="${LOG_DIR}/stage-${step}-${scenario}-fixed.log"
   patch_path="${WORK_REPO}/demos/raftsim/patch-series/${patch}"
 
+  stage_start="$(date +%s)"
   set +e
+  bug_start="$(date +%s)"
   (
     cd "${WORK_REPO}/demos/raftsim"
     GODEBUG="detsched=1,detschedseed=${SEED}" \
@@ -192,6 +197,7 @@ run_stage() {
   ) > "$bug_log" 2>&1
   local bug_status=$?
   set -e
+  bug_elapsed="$(( $(date +%s) - bug_start ))"
   if [[ "$bug_status" -ne 0 ]]; then
     echo "error: vulnerable stage failed unexpectedly (stage=${step} scenario=${scenario})" >&2
     rg -n "." "$bug_log" -m 80 >&2 || true
@@ -215,6 +221,7 @@ run_stage() {
   apply_stage_patch "$step" "$patch_path"
 
   set +e
+  fixed_start="$(date +%s)"
   (
     cd "${WORK_REPO}/demos/raftsim"
     GODEBUG="detsched=1,detschedseed=${SEED}" \
@@ -228,6 +235,7 @@ run_stage() {
   ) > "$fixed_log" 2>&1
   local fixed_status=$?
   set -e
+  fixed_elapsed="$(( $(date +%s) - fixed_start ))"
   if [[ "$fixed_status" -ne 0 ]]; then
     echo "error: fixed stage failed (stage=${step} scenario=${scenario})" >&2
     rg -n "." "$fixed_log" -m 80 >&2 || true
@@ -248,6 +256,9 @@ run_stage() {
     rg -n "." "$fixed_log" -m 80 >&2 || true
     exit 1
   fi
+  stage_end="$(date +%s)"
+  stage_elapsed="$(( stage_end - stage_start ))"
+  echo "timing stage=${step} scenario=${scenario} bug_sec=${bug_elapsed} fixed_sec=${fixed_elapsed} total_sec=${stage_elapsed}" | tee -a "$summary_file"
 }
 
 replace_once() {
@@ -326,5 +337,6 @@ if [[ "${executed_stages}" -eq 0 ]]; then
   exit 1
 fi
 echo "executed_stages=${executed_stages}" >> "$summary_file"
+echo "total_elapsed_sec=$(( $(date +%s) - script_start_epoch ))" >> "$summary_file"
 
 echo "Raft instructional patch-series checks passed."
