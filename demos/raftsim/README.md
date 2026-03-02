@@ -132,5 +132,5 @@ The log directory contains per-scenario run logs and summary diffs for debugging
 For bug-then-fix instructional checks, CI also runs:
 
 ```bash
-./scripts/run-raft-patch-series-ci.sh --release-tag latest --seed 7 --nodes 5 --rounds 6 --log-dir ./ci-logs/patch-series
+./scripts/run-raft-patch-series-ci.sh --go "$GO_DETSCHED_WORKDIR/go-src/bin/go" --seed 7 --nodes 5 --rounds 6 --log-dir ./ci-logs/patch-series
 ```
