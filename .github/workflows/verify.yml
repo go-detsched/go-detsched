@@ -70,6 +70,8 @@ jobs:
             --log-dir "$GO_DETSCHED_LOG_DIR" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/raft_demo_ci.log"
 
       - name: Run instructional Raft patch series checks
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -o pipefail
           chmod +x scripts/*.sh
