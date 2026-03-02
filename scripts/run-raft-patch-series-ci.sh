@@ -140,7 +140,11 @@ fi
 mkdir -p "$WORK_DIR"
 WORK_REPO="${WORK_DIR}/repo"
 rm -rf "$WORK_REPO"
-cp -a "${REPO_ROOT}/." "$WORK_REPO"
+git -C "$REPO_ROOT" worktree add --detach "$WORK_REPO" HEAD >/dev/null
+cleanup_worktree() {
+  git -C "$REPO_ROOT" worktree remove --force "$WORK_REPO" >/dev/null 2>&1 || true
+}
+trap cleanup_worktree EXIT
 
 echo "== Raft instructional patch-series check =="
 echo "go_bin=${GO_BIN}"
