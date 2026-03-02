@@ -10,6 +10,7 @@ NODES="${NODES:-5}"
 ROUNDS="${ROUNDS:-4}"
 GO_TAG="${GO_TAG:-go1.26.0}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+SCENARIO_TIMEOUT_SECS="${SCENARIO_TIMEOUT_SECS:-90}"
 
 usage() {
   cat <<'EOF'
@@ -26,6 +27,8 @@ Options:
   --seed <n>           Deterministic seed (default: 7)
   --nodes <n>          Raft node count (default: 5)
   --rounds <n>         Proposal rounds (default: 4)
+  --scenario-timeout <sec>
+                      Timeout for each vulnerable/fixed scenario run (default: 90)
   --work-dir <path>    Existing work directory (default: mktemp)
   --log-dir <path>     Log output directory (required)
   -h, --help           Show help
@@ -39,6 +42,7 @@ while [[ $# -gt 0 ]]; do
     --seed) SEED="$2"; shift 2 ;;
     --nodes) NODES="$2"; shift 2 ;;
     --rounds) ROUNDS="$2"; shift 2 ;;
+    --scenario-timeout) SCENARIO_TIMEOUT_SECS="$2"; shift 2 ;;
     --work-dir) WORK_DIR="$2"; shift 2 ;;
     --log-dir) LOG_DIR="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -60,6 +64,10 @@ if ! [[ "$NODES" =~ ^[0-9]+$ ]] || [[ "$NODES" -lt 3 ]]; then
 fi
 if ! [[ "$ROUNDS" =~ ^[0-9]+$ ]] || [[ "$ROUNDS" -le 0 ]]; then
   echo "error: --rounds must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "$SCENARIO_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || [[ "$SCENARIO_TIMEOUT_SECS" -le 0 ]]; then
+  echo "error: --scenario-timeout must be a positive integer" >&2
   exit 1
 fi
 
@@ -153,6 +161,7 @@ echo "work_repo=${WORK_REPO}"
 echo "seed=${SEED}"
 echo "nodes=${NODES}"
 echo "rounds=${ROUNDS}"
+echo "scenario_timeout_sec=${SCENARIO_TIMEOUT_SECS}"
 
 summary_file="${LOG_DIR}/patch_series_summary.log"
 executed_stages=0
@@ -160,9 +169,34 @@ executed_stages=0
   echo "seed=${SEED}"
   echo "nodes=${NODES}"
   echo "rounds=${ROUNDS}"
+  echo "scenario_timeout_sec=${SCENARIO_TIMEOUT_SECS}"
   echo "stages_file=${STAGES_FILE}"
 } > "$summary_file"
 script_start_epoch="$(date +%s)"
+
+CACHE_ROOT="${LOG_DIR}/raftsim-go-cache"
+mkdir -p "${CACHE_ROOT}/mod" "${CACHE_ROOT}/build"
+echo "gomodcache=${CACHE_ROOT}/mod" | tee -a "$summary_file"
+echo "gocache=${CACHE_ROOT}/build" | tee -a "$summary_file"
+
+warm_modules_start="$(date +%s)"
+set +e
+(
+  cd "${WORK_REPO}/demos/raftsim"
+  env \
+    GOMODCACHE="${CACHE_ROOT}/mod" \
+    GOCACHE="${CACHE_ROOT}/build" \
+    "$GO_BIN" mod download
+) > "${LOG_DIR}/patch_series_mod_download.log" 2>&1
+mod_status=$?
+set -e
+warm_modules_elapsed="$(( $(date +%s) - warm_modules_start ))"
+echo "timing warm_modules_sec=${warm_modules_elapsed} status=${mod_status}" | tee -a "$summary_file"
+if [[ "$mod_status" -ne 0 ]]; then
+  echo "error: failed to warm raftsim module dependencies" >&2
+  rg -n "." "${LOG_DIR}/patch_series_mod_download.log" -m 120 >&2 || true
+  exit "$mod_status"
+fi
 
 run_stage() {
   local step scenario patch bug_issue fixed_issue description
@@ -186,7 +220,10 @@ run_stage() {
   bug_start="$(date +%s)"
   (
     cd "${WORK_REPO}/demos/raftsim"
-    GODEBUG="detsched=1,detschedseed=${SEED}" \
+    timeout "${SCENARIO_TIMEOUT_SECS}s" env \
+      GODEBUG="detsched=1,detschedseed=${SEED}" \
+      GOMODCACHE="${CACHE_ROOT}/mod" \
+      GOCACHE="${CACHE_ROOT}/build" \
       "$GO_BIN" run ./cmd/raftsim \
       --scenario "${scenario}" \
       --seed "${SEED}" \
@@ -198,6 +235,11 @@ run_stage() {
   local bug_status=$?
   set -e
   bug_elapsed="$(( $(date +%s) - bug_start ))"
+  if [[ "$bug_status" -eq 124 ]]; then
+    echo "error: vulnerable scenario timed out after ${SCENARIO_TIMEOUT_SECS}s (stage=${step} scenario=${scenario})" >&2
+    rg -n "." "$bug_log" -m 120 >&2 || true
+    exit 124
+  fi
   if [[ "$bug_status" -ne 0 ]]; then
     echo "error: vulnerable stage failed unexpectedly (stage=${step} scenario=${scenario})" >&2
     rg -n "." "$bug_log" -m 80 >&2 || true
@@ -224,7 +266,10 @@ run_stage() {
   fixed_start="$(date +%s)"
   (
     cd "${WORK_REPO}/demos/raftsim"
-    GODEBUG="detsched=1,detschedseed=${SEED}" \
+    timeout "${SCENARIO_TIMEOUT_SECS}s" env \
+      GODEBUG="detsched=1,detschedseed=${SEED}" \
+      GOMODCACHE="${CACHE_ROOT}/mod" \
+      GOCACHE="${CACHE_ROOT}/build" \
       "$GO_BIN" run ./cmd/raftsim \
       --scenario "${scenario}" \
       --seed "${SEED}" \
@@ -236,6 +281,11 @@ run_stage() {
   local fixed_status=$?
   set -e
   fixed_elapsed="$(( $(date +%s) - fixed_start ))"
+  if [[ "$fixed_status" -eq 124 ]]; then
+    echo "error: fixed scenario timed out after ${SCENARIO_TIMEOUT_SECS}s (stage=${step} scenario=${scenario})" >&2
+    rg -n "." "$fixed_log" -m 120 >&2 || true
+    exit 124
+  fi
   if [[ "$fixed_status" -ne 0 ]]; then
     echo "error: fixed stage failed (stage=${step} scenario=${scenario})" >&2
     rg -n "." "$fixed_log" -m 80 >&2 || true

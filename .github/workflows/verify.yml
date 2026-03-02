@@ -81,6 +81,7 @@ jobs:
             --seed 7 \
             --nodes 5 \
             --rounds 6 \
+            --scenario-timeout 45 \
             --log-dir "$GO_DETSCHED_LOG_DIR/patch-series" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/raft_patch_series_ci.log"
           status=${PIPESTATUS[0]}
           set -e
