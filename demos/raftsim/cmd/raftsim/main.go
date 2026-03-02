@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	scenario := flag.String("scenario", scenarios.ScenarioSplitVote, "scenario to run (split_vote|stale_leader|reorder_commit|all)")
+	scenario := flag.String("scenario", scenarios.ScenarioSplitVote, "scenario to run (see `--scenario all` for full list)")
 	seed := flag.Int64("seed", 7, "deterministic scenario seed")
 	nodes := flag.Int("nodes", 5, "number of raft nodes")
 	rounds := flag.Int("rounds", 3, "proposal rounds for append scenarios")

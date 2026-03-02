@@ -1,0 +1,13 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] require up-to-date log for RequestVote
+
+--- a/demos/raftsim/internal/raft/node.go
++++ b/demos/raftsim/internal/raft/node.go
+@@
+-	grant := n.votedFor == "" || n.votedFor == req.CandidateID
++	grant := n.votedFor == "" || n.votedFor == req.CandidateID
++	if grant && !n.bugs.VoteWithoutLogCheck {
++		localLastTerm, localLastIdx := n.localLastLogMetaLocked()
++		grant = n.candidateUpToDate(req.LastLogTerm, req.LastLogIndex, localLastTerm, localLastIdx)
++	}
+

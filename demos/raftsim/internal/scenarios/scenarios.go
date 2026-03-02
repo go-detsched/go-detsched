@@ -19,6 +19,10 @@ const (
 	ScenarioStaleLeader      = "stale_leader"
 	ScenarioReorderCommitBug = "reorder_commit"
 	ScenarioLogTruncation    = "log_truncation"
+	ScenarioVoteNoLogCheck   = "vote_no_log_check"
+	ScenarioVoteComparator   = "vote_term_index_comparator"
+	ScenarioAppendTimerReset = "append_timer_reset"
+	ScenarioHigherTermStep   = "higher_term_step_down"
 )
 
 type RunConfig struct {
@@ -107,6 +111,10 @@ func ScenarioNames() []string {
 		ScenarioStaleLeader,
 		ScenarioReorderCommitBug,
 		ScenarioLogTruncation,
+		ScenarioVoteNoLogCheck,
+		ScenarioVoteComparator,
+		ScenarioAppendTimerReset,
+		ScenarioHigherTermStep,
 	}
 }
 
@@ -120,6 +128,14 @@ func runOne(cfg RunConfig) (Result, error) {
 		return runReorderCommit(cfg)
 	case ScenarioLogTruncation:
 		return runLogTruncation(cfg)
+	case ScenarioVoteNoLogCheck:
+		return runVoteNoLogCheck(cfg)
+	case ScenarioVoteComparator:
+		return runVoteComparator(cfg)
+	case ScenarioAppendTimerReset:
+		return runAppendTimerReset(cfg)
+	case ScenarioHigherTermStep:
+		return runHigherTermStepDown(cfg)
 	default:
 		return Result{}, fmt.Errorf("unknown scenario %q", cfg.Scenario)
 	}
@@ -455,6 +471,329 @@ func runLogTruncation(cfg RunConfig) (Result, error) {
 		result.Reason = "follower rejected inconsistent previous-log append"
 	}
 	result.Evidence = fmt.Sprintf("target=%s before_len=%d after_len=%d resp_success=%t", followerID, beforeSnap.LogLength, afterSnap.LogLength, resp.Success)
+	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
+	return withOracle(cluster, result), nil
+}
+
+func runVoteNoLogCheck(cfg RunConfig) (Result, error) {
+	nodeIDs := makeNodeIDs(max(cfg.Nodes, 3))
+	cluster, cancel, err := startCluster(nodeIDs, cfg.Seed, raft.BugConfig{
+		VoteWithoutLogCheck: true,
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	defer cancel()
+	defer cluster.Close()
+
+	ctx, done := context.WithTimeout(context.Background(), scenarioTimeout(cfg, 7*time.Second, 900*time.Millisecond))
+	defer done()
+	leaderID, err := cluster.WaitForSingleLeader(ctx, 40*time.Millisecond)
+	if err != nil {
+		return Result{}, err
+	}
+	for i := 0; i < max(cfg.Rounds, 2); i++ {
+		_ = cluster.Propose(ctx, leaderID, fmt.Sprintf("vote-log-check-%d", i))
+	}
+
+	targetID := ""
+	candidateID := ""
+	for _, id := range nodeIDs {
+		if id != leaderID && targetID == "" {
+			targetID = id
+			continue
+		}
+		if id != targetID {
+			candidateID = id
+			break
+		}
+	}
+	if targetID == "" || candidateID == "" {
+		return Result{}, fmt.Errorf("unable to choose target/candidate for %s", ScenarioVoteNoLogCheck)
+	}
+
+	req := raft.Message{
+		Type:         raft.MsgRequestVote,
+		From:         candidateID,
+		Term:         cluster.MaxTerm() + 1,
+		CandidateID:  candidateID,
+		LastLogTerm:  0,
+		LastLogIndex: 0,
+	}
+	resp, err := cluster.InjectMessage(ctx, candidateID, targetID, req)
+	if err != nil {
+		return Result{}, err
+	}
+
+	result := Result{
+		Scenario: ScenarioVoteNoLogCheck,
+		Seed:     cfg.Seed,
+		Events:   cluster.EventLog(),
+	}
+	if resp.VoteGranted {
+		result.BugObserved = true
+		result.Passed = cfg.ExpectBug
+		if cfg.ExpectBug {
+			result.IssueCode = "RAFT_VOTE_IGNORES_LOG_UPTODATE"
+			result.Reason = "follower granted vote to candidate with stale log metadata"
+		} else {
+			result.IssueCode = "RAFT_VOTE_LOG_CHECK_BUG_STILL_PRESENT"
+			result.Reason = "stale-log candidate still granted vote after fix patch"
+		}
+		result.Evidence = fmt.Sprintf("target=%s candidate=%s granted=%t candidate_last=(0,0)", targetID, candidateID, resp.VoteGranted)
+		result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
+		return withOracle(cluster, result), nil
+	}
+
+	if cfg.ExpectBug {
+		result.Passed = false
+		result.IssueCode = "RAFT_VOTE_LOG_CHECK_NOT_REPRODUCED"
+		result.Reason = "stale-log vote was rejected unexpectedly in vulnerable mode"
+	} else {
+		result.Passed = true
+		result.IssueCode = "RAFT_VOTE_REQUIRES_UPTODATE_LOG_FIXED"
+		result.Reason = "follower rejected stale-log vote request"
+	}
+	result.Evidence = fmt.Sprintf("target=%s candidate=%s granted=%t candidate_last=(0,0)", targetID, candidateID, resp.VoteGranted)
+	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
+	return withOracle(cluster, result), nil
+}
+
+func runVoteComparator(cfg RunConfig) (Result, error) {
+	nodeIDs := makeNodeIDs(max(cfg.Nodes, 3))
+	cluster, cancel, err := startCluster(nodeIDs, cfg.Seed, raft.BugConfig{
+		VoteWrongComparator: true,
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	defer cancel()
+	defer cluster.Close()
+
+	ctx, done := context.WithTimeout(context.Background(), scenarioTimeout(cfg, 7*time.Second, 900*time.Millisecond))
+	defer done()
+	leaderID, err := cluster.WaitForSingleLeader(ctx, 40*time.Millisecond)
+	if err != nil {
+		return Result{}, err
+	}
+	for i := 0; i < max(cfg.Rounds, 2); i++ {
+		_ = cluster.Propose(ctx, leaderID, fmt.Sprintf("vote-comparator-%d", i))
+	}
+
+	targetID := ""
+	candidateID := ""
+	for _, id := range nodeIDs {
+		if id != leaderID && targetID == "" {
+			targetID = id
+			continue
+		}
+		if id != targetID {
+			candidateID = id
+			break
+		}
+	}
+	if targetID == "" || candidateID == "" {
+		return Result{}, fmt.Errorf("unable to choose target/candidate for %s", ScenarioVoteComparator)
+	}
+	targetSnap, err := cluster.NodeSnapshot(targetID)
+	if err != nil {
+		return Result{}, err
+	}
+	localLastTerm := 0
+	if targetSnap.LogLength > 0 {
+		localLastTerm = targetSnap.Log[targetSnap.LogLength-1].Term
+	}
+	staleTerm := localLastTerm - 1
+	if staleTerm < 0 {
+		staleTerm = 0
+	}
+	req := raft.Message{
+		Type:         raft.MsgRequestVote,
+		From:         candidateID,
+		Term:         cluster.MaxTerm() + 1,
+		CandidateID:  candidateID,
+		LastLogTerm:  staleTerm,
+		LastLogIndex: targetSnap.LogLength + 5,
+	}
+	resp, err := cluster.InjectMessage(ctx, candidateID, targetID, req)
+	if err != nil {
+		return Result{}, err
+	}
+
+	result := Result{
+		Scenario: ScenarioVoteComparator,
+		Seed:     cfg.Seed,
+		Events:   cluster.EventLog(),
+	}
+	if resp.VoteGranted {
+		result.BugObserved = true
+		result.Passed = cfg.ExpectBug
+		if cfg.ExpectBug {
+			result.IssueCode = "RAFT_VOTE_TERM_INDEX_COMPARATOR_BUG"
+			result.Reason = "vote granted to candidate with lower last-log term but larger index"
+		} else {
+			result.IssueCode = "RAFT_VOTE_COMPARATOR_BUG_STILL_PRESENT"
+			result.Reason = "vote comparator still grants lower-term candidate after fix patch"
+		}
+		result.Evidence = fmt.Sprintf("target=%s candidate=%s granted=%t candidate_last=(%d,%d) local_last_term=%d", targetID, candidateID, resp.VoteGranted, staleTerm, targetSnap.LogLength+5, localLastTerm)
+		result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
+		return withOracle(cluster, result), nil
+	}
+
+	if cfg.ExpectBug {
+		result.Passed = false
+		result.IssueCode = "RAFT_VOTE_COMPARATOR_NOT_REPRODUCED"
+		result.Reason = "lower-term/higher-index vote was rejected unexpectedly in vulnerable mode"
+	} else {
+		result.Passed = true
+		result.IssueCode = "RAFT_VOTE_TERM_COMPARATOR_FIXED"
+		result.Reason = "vote comparator rejected lower-term candidate despite larger index"
+	}
+	result.Evidence = fmt.Sprintf("target=%s candidate=%s granted=%t candidate_last=(%d,%d) local_last_term=%d", targetID, candidateID, resp.VoteGranted, staleTerm, targetSnap.LogLength+5, localLastTerm)
+	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
+	return withOracle(cluster, result), nil
+}
+
+func runAppendTimerReset(cfg RunConfig) (Result, error) {
+	nodeIDs := makeNodeIDs(max(cfg.Nodes, 3))
+	cluster, cancel, err := startCluster(nodeIDs, cfg.Seed, raft.BugConfig{
+		NoAppendTimerReset: true,
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	defer cancel()
+	defer cluster.Close()
+
+	wait := scenarioTimeout(cfg, 2*time.Second, 300*time.Millisecond)
+	if cfg.Synctest {
+		synctest.Wait()
+		time.Sleep(wait)
+		synctest.Wait()
+	} else {
+		time.Sleep(wait)
+	}
+
+	result := Result{
+		Scenario: ScenarioAppendTimerReset,
+		Seed:     cfg.Seed,
+		Events:   cluster.EventLog(),
+	}
+	timerResetBugEvents := 0
+	elections := 0
+	for _, e := range result.Events {
+		if strings.Contains(e, "leader_elected") {
+			elections++
+		}
+		if strings.Contains(e, "bug_no_append_timer_reset") {
+			timerResetBugEvents++
+		}
+	}
+
+	if timerResetBugEvents > 0 {
+		result.BugObserved = true
+		result.Passed = cfg.ExpectBug
+		if cfg.ExpectBug {
+			result.IssueCode = "RAFT_APPEND_DOES_NOT_RESET_TIMER"
+			result.Reason = "follower accepted append entries without resetting election timer"
+		} else {
+			result.IssueCode = "RAFT_APPEND_TIMER_RESET_BUG_STILL_PRESENT"
+			result.Reason = "append handling still skips election timer reset after fix patch"
+		}
+		result.Evidence = fmt.Sprintf("bug_events=%d leader_elected_events=%d wait=%s", timerResetBugEvents, elections, wait)
+		result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
+		return withOracle(cluster, result), nil
+	}
+
+	if cfg.ExpectBug {
+		result.Passed = false
+		result.IssueCode = "RAFT_APPEND_TIMER_BUG_NOT_REPRODUCED"
+		result.Reason = "did not observe append-without-timer-reset behavior in vulnerable mode"
+	} else {
+		result.Passed = true
+		result.IssueCode = "RAFT_APPEND_RESETS_TIMER_FIXED"
+		result.Reason = "append handling reset election timer as expected"
+	}
+	result.Evidence = fmt.Sprintf("bug_events=%d leader_elected_events=%d wait=%s", timerResetBugEvents, elections, wait)
+	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
+	return withOracle(cluster, result), nil
+}
+
+func runHigherTermStepDown(cfg RunConfig) (Result, error) {
+	nodeIDs := makeNodeIDs(max(cfg.Nodes, 3))
+	cluster, cancel, err := startCluster(nodeIDs, cfg.Seed, raft.BugConfig{
+		NoStepDownOnHigher: true,
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	defer cancel()
+	defer cluster.Close()
+
+	ctx, done := context.WithTimeout(context.Background(), scenarioTimeout(cfg, 7*time.Second, 900*time.Millisecond))
+	defer done()
+	leaderID, err := cluster.WaitForSingleLeader(ctx, 40*time.Millisecond)
+	if err != nil {
+		return Result{}, err
+	}
+	targetID := ""
+	for _, id := range nodeIDs {
+		if id != leaderID {
+			targetID = id
+			break
+		}
+	}
+	if targetID == "" {
+		return Result{}, fmt.Errorf("unable to choose follower for %s", ScenarioHigherTermStep)
+	}
+	higherTerm := cluster.MaxTerm() + 3
+	if err := cluster.BumpNodeTerm(targetID, higherTerm); err != nil {
+		return Result{}, err
+	}
+	_ = cluster.Propose(ctx, leaderID, "force-higher-term-response")
+	if cfg.Synctest {
+		synctest.Wait()
+		time.Sleep(scenarioTimeout(cfg, 400*time.Millisecond, 50*time.Millisecond))
+		synctest.Wait()
+	} else {
+		time.Sleep(scenarioTimeout(cfg, 400*time.Millisecond, 50*time.Millisecond))
+	}
+	leaderSnap, err := cluster.NodeSnapshot(leaderID)
+	if err != nil {
+		return Result{}, err
+	}
+
+	result := Result{
+		Scenario: ScenarioHigherTermStep,
+		Seed:     cfg.Seed,
+		Events:   cluster.EventLog(),
+	}
+	bugObserved := leaderSnap.Role == raft.RoleLeader && leaderSnap.Term < higherTerm
+	if bugObserved {
+		result.BugObserved = true
+		result.Passed = cfg.ExpectBug
+		if cfg.ExpectBug {
+			result.IssueCode = "RAFT_LEADER_IGNORES_HIGHER_TERM"
+			result.Reason = "leader failed to step down after observing higher term response"
+		} else {
+			result.IssueCode = "RAFT_STEPDOWN_BUG_STILL_PRESENT"
+			result.Reason = "leader still ignores higher term response after fix patch"
+		}
+		result.Evidence = fmt.Sprintf("leader=%s leader_role=%s leader_term=%d observed_higher_term=%d", leaderID, leaderSnap.Role, leaderSnap.Term, higherTerm)
+		result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
+		return withOracle(cluster, result), nil
+	}
+
+	if cfg.ExpectBug {
+		result.Passed = false
+		result.IssueCode = "RAFT_STEPDOWN_NOT_REPRODUCED"
+		result.Reason = "leader stepped down unexpectedly in vulnerable mode"
+	} else {
+		result.Passed = true
+		result.IssueCode = "RAFT_LEADER_STEPS_DOWN_ON_HIGHER_TERM_FIXED"
+		result.Reason = "leader stepped down after higher-term response"
+	}
+	result.Evidence = fmt.Sprintf("leader=%s leader_role=%s leader_term=%d observed_higher_term=%d", leaderID, leaderSnap.Role, leaderSnap.Term, higherTerm)
 	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
 	return withOracle(cluster, result), nil
 }

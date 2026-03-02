@@ -1,0 +1,18 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] fix vote term/index comparator
+
+--- a/demos/raftsim/internal/raft/node.go
++++ b/demos/raftsim/internal/raft/node.go
+@@
+-	if n.bugs.VoteWrongComparator {
+-		return candidateIdx >= localIdx
+-	}
+-	if candidateTerm != localTerm {
+-		return candidateTerm > localTerm
+-	}
+-	return candidateIdx >= localIdx
++	if candidateTerm != localTerm {
++		return candidateTerm > localTerm
++	}
++	return candidateIdx >= localIdx
+

@@ -67,6 +67,10 @@ type BugConfig struct {
 	AcceptStaleLeader    bool
 	CommitOnSingleAck    bool
 	UnsafeLogTruncation  bool
+	VoteWithoutLogCheck  bool
+	VoteWrongComparator  bool
+	NoAppendTimerReset   bool
+	NoStepDownOnHigher   bool
 }
 
 type MessageFaultHook func(from, to string, msgType MessageType, seq uint64) (drop bool, delay time.Duration)
@@ -242,6 +246,11 @@ func (n *Node) Propose(ctx context.Context, payload string) error {
 			n.eventf("append_failed leader=%s target=%s err=%q", n.id, peerID, err.Error())
 			continue
 		}
+		if resp.Term > leaderTerm {
+			if n.maybeStepDownOnHigherTerm(resp.Term, "propose_response") {
+				return fmt.Errorf("leader observed higher term in append response: local=%d observed=%d", leaderTerm, resp.Term)
+			}
+		}
 		if resp.Success {
 			acks++
 		}
@@ -298,6 +307,7 @@ func (n *Node) runElectionRound(ctx context.Context) {
 	n.role = RoleCandidate
 	n.term++
 	currentTerm := n.term
+	lastLogTerm, lastLogIndex := n.localLastLogMetaLocked()
 	n.votedFor = n.id
 	n.leaderID = ""
 	n.lastHeartbeat = time.Now()
@@ -311,25 +321,19 @@ func (n *Node) runElectionRound(ctx context.Context) {
 	for _, peerID := range n.order {
 		addr := n.peers[peerID]
 		req := Message{
-			Type:        MsgRequestVote,
-			From:        n.id,
-			Term:        currentTerm,
-			CandidateID: n.id,
+			Type:         MsgRequestVote,
+			From:         n.id,
+			Term:         currentTerm,
+			CandidateID:  n.id,
+			LastLogTerm:  lastLogTerm,
+			LastLogIndex: lastLogIndex,
 		}
 		resp, err := n.sendMessage(ctx, peerID, addr, req)
 		if err != nil {
 			n.eventf("vote_failed from=%s to=%s term=%d err=%q", n.id, peerID, currentTerm, err.Error())
 			continue
 		}
-		if resp.Term > currentTerm {
-			n.mu.Lock()
-			if resp.Term > n.term {
-				n.term = resp.Term
-				n.role = RoleFollower
-				n.votedFor = ""
-			}
-			n.mu.Unlock()
-			n.eventf("election_step_down node=%s new_term=%d", n.id, resp.Term)
+		if resp.Term > currentTerm && n.maybeStepDownOnHigherTerm(resp.Term, "vote_response") {
 			return
 		}
 		if resp.VoteGranted {
@@ -376,9 +380,13 @@ func (n *Node) heartbeatLoop(ctx context.Context, term int) {
 					LeaderID:     n.id,
 					LeaderCommit: leaderCommit,
 				}
-				_, err := n.sendMessage(ctx, peerID, addr, req)
+				resp, err := n.sendMessage(ctx, peerID, addr, req)
 				if err != nil {
 					n.eventf("heartbeat_failed leader=%s target=%s term=%d err=%q", n.id, peerID, term, err.Error())
+					continue
+				}
+				if resp.Term > term && n.maybeStepDownOnHigherTerm(resp.Term, "heartbeat_response") {
+					return
 				}
 			}
 		}
@@ -442,6 +450,16 @@ func (n *Node) handleRequestVote(req Message) Message {
 		n.votedFor = ""
 	}
 	grant := n.votedFor == "" || n.votedFor == req.CandidateID
+	if grant && !n.bugs.VoteWithoutLogCheck {
+		localLastTerm, localLastIdx := n.localLastLogMetaLocked()
+		candidateUpToDate := n.candidateUpToDate(req.LastLogTerm, req.LastLogIndex, localLastTerm, localLastIdx)
+		if !candidateUpToDate {
+			grant = false
+			n.eventf("vote_reject_outdated node=%s candidate=%s candidate_last=(%d,%d) local_last=(%d,%d)", n.id, req.CandidateID, req.LastLogTerm, req.LastLogIndex, localLastTerm, localLastIdx)
+		}
+	} else if grant && n.bugs.VoteWithoutLogCheck {
+		n.eventf("bug_vote_without_log_check node=%s candidate=%s", n.id, req.CandidateID)
+	}
 	if grant {
 		n.votedFor = req.CandidateID
 		n.lastHeartbeat = time.Now()
@@ -477,7 +495,11 @@ func (n *Node) handleAppendEntries(req Message) Message {
 		n.votedFor = ""
 	}
 	n.leaderID = req.LeaderID
-	n.lastHeartbeat = time.Now()
+	if n.bugs.NoAppendTimerReset {
+		n.eventf("bug_no_append_timer_reset node=%s leader=%s term=%d", n.id, req.LeaderID, req.Term)
+	} else {
+		n.lastHeartbeat = time.Now()
+	}
 
 	if req.PrevLogIndex > len(n.log) {
 		if !n.bugs.UnsafeLogTruncation {
@@ -610,6 +632,44 @@ func (n *Node) sendMessage(ctx context.Context, peerID, address string, req Mess
 		return Message{}, err
 	}
 	return resp, nil
+}
+
+func (n *Node) localLastLogMetaLocked() (term, idx int) {
+	if len(n.log) == 0 {
+		return 0, 0
+	}
+	last := n.log[len(n.log)-1]
+	return last.Term, last.Index
+}
+
+func (n *Node) candidateUpToDate(candidateTerm, candidateIdx, localTerm, localIdx int) bool {
+	if n.bugs.VoteWrongComparator {
+		// Intentionally buggy comparator for demonstration.
+		return candidateIdx >= localIdx
+	}
+	if candidateTerm != localTerm {
+		return candidateTerm > localTerm
+	}
+	return candidateIdx >= localIdx
+}
+
+func (n *Node) maybeStepDownOnHigherTerm(observedTerm int, reason string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if observedTerm <= n.term {
+		return false
+	}
+	if n.bugs.NoStepDownOnHigher {
+		n.eventf("bug_ignore_higher_term node=%s local_term=%d observed_term=%d reason=%s", n.id, n.term, observedTerm, reason)
+		return false
+	}
+	n.term = observedTerm
+	n.role = RoleFollower
+	n.votedFor = ""
+	n.leaderID = ""
+	n.lastHeartbeat = time.Now()
+	n.eventf("step_down_higher_term node=%s term=%d reason=%s", n.id, observedTerm, reason)
+	return true
 }
 
 func (n *Node) currentTerm() int {

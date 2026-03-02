@@ -192,6 +192,11 @@ func (c *Cluster) NodeSnapshot(nodeID string) (NodeSnapshot, error) {
 }
 
 func (c *Cluster) InjectAppendEntries(ctx context.Context, fromID, toID string, req Message) (Message, error) {
+	req.Type = MsgAppendEntries
+	return c.InjectMessage(ctx, fromID, toID, req)
+}
+
+func (c *Cluster) InjectMessage(ctx context.Context, fromID, toID string, req Message) (Message, error) {
 	src, ok := c.nodes[fromID]
 	if !ok {
 		return Message{}, fmt.Errorf("unknown source node %q", fromID)

@@ -42,6 +42,10 @@ GODEBUG=detsched=1,detschedseed=7 "$GO_BIN" run ./cmd/raftsim --scenario stale_l
 - `stale_leader`: follower incorrectly accepts stale leader append.
 - `reorder_commit`: commit index advances without majority replication.
 - `log_truncation`: follower accepts inconsistent previous-log append.
+- `vote_no_log_check`: follower grants vote without log up-to-date validation.
+- `vote_term_index_comparator`: vote comparator prioritizes index over term.
+- `append_timer_reset`: follower fails to reset election timer on append.
+- `higher_term_step_down`: leader ignores higher-term append responses.
 
 Each scenario prints a deterministic event hash for easy reproduction:
 
@@ -101,7 +105,7 @@ GO_BIN="$PWD/go-detsched-go1.26.0-linux-amd64/bin/go"
 This repo now includes a numbered teaching patch sequence in:
 
 - `demos/raftsim/patch-series/stages.tsv`
-- `demos/raftsim/patch-series/0001-*.patch` through `0004-*.patch`
+- `demos/raftsim/patch-series/0001-*.patch` through `0008-*.patch`
 
 Each stage preserves one explicit fix step:
 

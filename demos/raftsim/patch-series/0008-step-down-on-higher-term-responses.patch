@@ -1,0 +1,18 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] step down on higher-term responses
+
+--- a/demos/raftsim/internal/raft/node.go
++++ b/demos/raftsim/internal/raft/node.go
+@@
+-	if n.bugs.NoStepDownOnHigher {
+-		n.eventf("bug_ignore_higher_term node=%s local_term=%d observed_term=%d reason=%s", n.id, n.term, observedTerm, reason)
+-		return false
+-	}
+ 	n.term = observedTerm
+ 	n.role = RoleFollower
+ 	n.votedFor = ""
+ 	n.leaderID = ""
+ 	n.lastHeartbeat = time.Now()
+ 	n.eventf("step_down_higher_term node=%s term=%d reason=%s", n.id, observedTerm, reason)
+ 	return true
+
