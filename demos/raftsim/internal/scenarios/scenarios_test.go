@@ -28,6 +28,7 @@ func TestSynctestDeterministicRepro(t *testing.T) {
 					Seed:     seed,
 					Nodes:    nodes,
 					Rounds:   rounds,
+					ExpectBug: true,
 					Verbose:  false,
 					Synctest: true,
 				}

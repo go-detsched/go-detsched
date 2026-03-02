@@ -1,0 +1,22 @@
+diff --git a/demos/raftsim/internal/raft/node.go b/demos/raftsim/internal/raft/node.go
+--- a/demos/raftsim/internal/raft/node.go
++++ b/demos/raftsim/internal/raft/node.go
+@@ -247,18 +247,8 @@ func (n *Node) Propose(ctx context.Context, payload string) error {
+ 	n.mu.Lock()
+ 	defer n.mu.Unlock()
+ 	clusterSize := len(n.peers) + 1
+ 	majority := clusterSize/2 + 1
+-	if n.bugs.CommitOnSingleAck {
+-		// Intentionally buggy commit rule for demo purposes.
+-		if acks >= 2 {
+-			n.commitIndex = entry.Index
+-			n.eventf("commit_buggy leader=%s index=%d acks=%d majority=%d", n.id, entry.Index, acks, majority)
+-			return nil
+-		}
+-		return fmt.Errorf("not enough acknowledgements for buggy commit: %d", acks)
+-	}
+-
+	if acks >= majority {
+		n.commitIndex = entry.Index
+		n.eventf("commit_majority leader=%s index=%d acks=%d", n.id, entry.Index, acks)
+		return nil

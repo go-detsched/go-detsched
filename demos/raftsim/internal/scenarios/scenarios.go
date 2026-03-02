@@ -17,6 +17,7 @@ const (
 	ScenarioSplitVote        = "split_vote"
 	ScenarioStaleLeader      = "stale_leader"
 	ScenarioReorderCommitBug = "reorder_commit"
+	ScenarioLogTruncation    = "log_truncation"
 )
 
 type RunConfig struct {
@@ -24,6 +25,7 @@ type RunConfig struct {
 	Seed     int64
 	Nodes    int
 	Rounds   int
+	ExpectBug bool
 	Verbose  bool
 	Synctest bool
 }
@@ -99,6 +101,7 @@ func ScenarioNames() []string {
 		ScenarioSplitVote,
 		ScenarioStaleLeader,
 		ScenarioReorderCommitBug,
+		ScenarioLogTruncation,
 	}
 }
 
@@ -110,6 +113,8 @@ func runOne(cfg RunConfig) (Result, error) {
 		return runStaleLeader(cfg)
 	case ScenarioReorderCommitBug:
 		return runReorderCommit(cfg)
+	case ScenarioLogTruncation:
+		return runLogTruncation(cfg)
 	default:
 		return Result{}, fmt.Errorf("unknown scenario %q", cfg.Scenario)
 	}
@@ -141,18 +146,31 @@ func runSplitVote(cfg RunConfig) (Result, error) {
 	}
 	if err != nil {
 		result.BugObserved = true
-		result.Passed = true
-		result.IssueCode = "RAFT_SPLIT_VOTE_LIVELOCK"
-		result.Reason = "reproducible split-vote livelock (fixed timeout + dropped vote requests)"
-		result.Evidence = "leader=none vote_requests=dropped timeout=4s"
+		result.Passed = cfg.ExpectBug
+		if cfg.ExpectBug {
+			result.IssueCode = "RAFT_SPLIT_VOTE_LIVELOCK"
+			result.Reason = "reproducible split-vote livelock (fixed timeout + dropped vote requests)"
+			result.Evidence = "leader=none vote_requests=dropped timeout=4s"
+		} else {
+			result.IssueCode = "RAFT_SPLIT_VOTE_BUG_STILL_PRESENT"
+			result.Reason = "split-vote livelock still reproduced after fix patch"
+			result.Evidence = "leader=none vote_requests=dropped timeout=4s"
+		}
 		result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
 		return result, nil
 	}
-	result.Passed = false
 	result.BugObserved = false
-	result.IssueCode = "RAFT_SPLIT_VOTE_NOT_REPRODUCED"
-	result.Reason = "leader elected unexpectedly; adjust seed or scenario parameters"
-	result.Evidence = "leader=present vote_requests=dropped"
+	if cfg.ExpectBug {
+		result.Passed = false
+		result.IssueCode = "RAFT_SPLIT_VOTE_NOT_REPRODUCED"
+		result.Reason = "leader elected unexpectedly; adjust seed or scenario parameters"
+		result.Evidence = "leader=present vote_requests=dropped"
+	} else {
+		result.Passed = true
+		result.IssueCode = "RAFT_SPLIT_VOTE_FIXED"
+		result.Reason = "leader election survived vote-loss fault pattern without livelock"
+		result.Evidence = "leader=present vote_requests=dropped"
+	}
 	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
 	return result, nil
 }
@@ -204,18 +222,31 @@ func runStaleLeader(cfg RunConfig) (Result, error) {
 	for _, e := range result.Events {
 		if strings.Contains(e, "bug_accept_stale") {
 			result.BugObserved = true
-			result.Passed = true
-			result.IssueCode = "RAFT_STALE_LEADER_ACCEPTED"
-			result.Reason = "stale leader append accepted after follower moved to higher term"
-			result.Evidence = "event=bug_accept_stale follower_accepted_lower_term_append=true"
+			result.Passed = cfg.ExpectBug
+			if cfg.ExpectBug {
+				result.IssueCode = "RAFT_STALE_LEADER_ACCEPTED"
+				result.Reason = "stale leader append accepted after follower moved to higher term"
+				result.Evidence = "event=bug_accept_stale follower_accepted_lower_term_append=true"
+			} else {
+				result.IssueCode = "RAFT_STALE_LEADER_BUG_STILL_PRESENT"
+				result.Reason = "stale-leader acceptance still observed after fix patch"
+				result.Evidence = "event=bug_accept_stale follower_accepted_lower_term_append=true"
+			}
 			result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
 			return result, nil
 		}
 	}
-	result.Passed = false
-	result.IssueCode = "RAFT_STALE_LEADER_NOT_REPRODUCED"
-	result.Reason = "no stale-leader acceptance event observed"
-	result.Evidence = "event=bug_accept_stale missing"
+	if cfg.ExpectBug {
+		result.Passed = false
+		result.IssueCode = "RAFT_STALE_LEADER_NOT_REPRODUCED"
+		result.Reason = "no stale-leader acceptance event observed"
+		result.Evidence = "event=bug_accept_stale missing"
+	} else {
+		result.Passed = true
+		result.IssueCode = "RAFT_STALE_LEADER_FIXED"
+		result.Reason = "follower rejected stale leader append after term bump"
+		result.Evidence = "event=bug_accept_stale missing"
+	}
 	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
 	return result, nil
 }
@@ -287,17 +318,138 @@ func runReorderCommit(cfg RunConfig) (Result, error) {
 	}
 	if highestCommit > 0 && replicatedAtOrAbove < majority {
 		result.BugObserved = true
-		result.Passed = true
-		result.IssueCode = "RAFT_COMMIT_WITHOUT_MAJORITY"
-		result.Reason = fmt.Sprintf("commit advanced without majority replication commit=%d replicated=%d majority=%d", highestCommit, replicatedAtOrAbove, majority)
-		result.Evidence = fmt.Sprintf("commit=%d replicated=%d majority=%d", highestCommit, replicatedAtOrAbove, majority)
+		result.Passed = cfg.ExpectBug
+		if cfg.ExpectBug {
+			result.IssueCode = "RAFT_COMMIT_WITHOUT_MAJORITY"
+			result.Reason = fmt.Sprintf("commit advanced without majority replication commit=%d replicated=%d majority=%d", highestCommit, replicatedAtOrAbove, majority)
+			result.Evidence = fmt.Sprintf("commit=%d replicated=%d majority=%d", highestCommit, replicatedAtOrAbove, majority)
+		} else {
+			result.IssueCode = "RAFT_COMMIT_BUG_STILL_PRESENT"
+			result.Reason = fmt.Sprintf("commit still advances without majority after fix patch commit=%d replicated=%d majority=%d", highestCommit, replicatedAtOrAbove, majority)
+			result.Evidence = fmt.Sprintf("commit=%d replicated=%d majority=%d", highestCommit, replicatedAtOrAbove, majority)
+		}
 		result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
 		return result, nil
 	}
-	result.Passed = false
-	result.IssueCode = "RAFT_COMMIT_BUG_NOT_REPRODUCED"
-	result.Reason = "did not observe buggy commit advancement"
-	result.Evidence = fmt.Sprintf("commit=%d replicated=%d majority=%d", highestCommit, replicatedAtOrAbove, majority)
+	if cfg.ExpectBug {
+		result.Passed = false
+		result.IssueCode = "RAFT_COMMIT_BUG_NOT_REPRODUCED"
+		result.Reason = "did not observe buggy commit advancement"
+		result.Evidence = fmt.Sprintf("commit=%d replicated=%d majority=%d", highestCommit, replicatedAtOrAbove, majority)
+	} else {
+		result.Passed = true
+		result.IssueCode = "RAFT_COMMIT_WITH_MAJORITY_FIXED"
+		result.Reason = "commit index did not advance without majority replication"
+		result.Evidence = fmt.Sprintf("commit=%d replicated=%d majority=%d", highestCommit, replicatedAtOrAbove, majority)
+	}
+	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
+	return result, nil
+}
+
+func runLogTruncation(cfg RunConfig) (Result, error) {
+	nodeIDs := makeNodeIDs(max(cfg.Nodes, 3))
+	cluster, cancel, err := startCluster(nodeIDs, cfg.Seed, raft.BugConfig{
+		UnsafeLogTruncation: true,
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	defer cancel()
+	defer cluster.Close()
+
+	ctx, done := context.WithTimeout(context.Background(), scenarioTimeout(cfg, 7*time.Second, 900*time.Millisecond))
+	defer done()
+	leaderID, err := cluster.WaitForSingleLeader(ctx, 40*time.Millisecond)
+	if err != nil {
+		return Result{}, err
+	}
+	for i := 0; i < max(cfg.Rounds, 2); i++ {
+		_ = cluster.Propose(ctx, leaderID, fmt.Sprintf("seed-cmd-%d", i))
+	}
+	if cfg.Synctest {
+		synctest.Wait()
+		time.Sleep(scenarioTimeout(cfg, 500*time.Millisecond, 60*time.Millisecond))
+		synctest.Wait()
+	} else {
+		time.Sleep(scenarioTimeout(cfg, 500*time.Millisecond, 60*time.Millisecond))
+	}
+
+	var followerID string
+	for _, id := range nodeIDs {
+		if id != leaderID {
+			followerID = id
+			break
+		}
+	}
+	if followerID == "" {
+		return Result{}, fmt.Errorf("unable to choose follower for log truncation scenario")
+	}
+
+	leaderSnap, err := cluster.NodeSnapshot(leaderID)
+	if err != nil {
+		return Result{}, err
+	}
+	beforeSnap, err := cluster.NodeSnapshot(followerID)
+	if err != nil {
+		return Result{}, err
+	}
+
+	req := raft.Message{
+		Type:         raft.MsgAppendEntries,
+		From:         leaderID,
+		Term:         leaderSnap.Term,
+		LeaderID:     leaderID,
+		PrevLogIndex: beforeSnap.LogLength + 4, // intentionally inconsistent
+		PrevLogTerm:  leaderSnap.Term,
+		Entries: []raft.LogEntry{
+			{
+				Index: beforeSnap.LogLength + 5,
+				Term:  leaderSnap.Term,
+				Data:  "forged-log-entry",
+			},
+		},
+		LeaderCommit: beforeSnap.CommitIndex,
+	}
+	resp, err := cluster.InjectAppendEntries(ctx, leaderID, followerID, req)
+	if err != nil {
+		return Result{}, err
+	}
+	afterSnap, err := cluster.NodeSnapshot(followerID)
+	if err != nil {
+		return Result{}, err
+	}
+
+	result := Result{
+		Scenario: ScenarioLogTruncation,
+		Seed:     cfg.Seed,
+		Events:   cluster.EventLog(),
+	}
+	bugObserved := resp.Success && afterSnap.LogLength > beforeSnap.LogLength
+	if bugObserved {
+		result.BugObserved = true
+		result.Passed = cfg.ExpectBug
+		if cfg.ExpectBug {
+			result.IssueCode = "RAFT_LOG_TRUNCATION_ACCEPTED"
+			result.Reason = "follower accepted append entries with inconsistent previous-log reference"
+		} else {
+			result.IssueCode = "RAFT_LOG_TRUNCATION_BUG_STILL_PRESENT"
+			result.Reason = "inconsistent previous-log append is still accepted after fix patch"
+		}
+		result.Evidence = fmt.Sprintf("target=%s before_len=%d after_len=%d resp_success=%t", followerID, beforeSnap.LogLength, afterSnap.LogLength, resp.Success)
+		result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
+		return result, nil
+	}
+
+	if cfg.ExpectBug {
+		result.Passed = false
+		result.IssueCode = "RAFT_LOG_TRUNCATION_NOT_REPRODUCED"
+		result.Reason = "inconsistent previous-log append was rejected unexpectedly"
+	} else {
+		result.Passed = true
+		result.IssueCode = "RAFT_LOG_TRUNCATION_FIXED"
+		result.Reason = "follower rejected inconsistent previous-log append"
+	}
+	result.Evidence = fmt.Sprintf("target=%s before_len=%d after_len=%d resp_success=%t", followerID, beforeSnap.LogLength, afterSnap.LogLength, resp.Success)
 	result.EventHash = stableHash(result.Scenario, result.Reason, strconv.FormatInt(result.Seed, 10))
 	return result, nil
 }

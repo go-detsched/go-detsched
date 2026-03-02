@@ -69,6 +69,17 @@ jobs:
             --timeout 420 \
             --log-dir "$GO_DETSCHED_LOG_DIR" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/raft_demo_ci.log"
 
+      - name: Run instructional Raft patch series checks
+        run: |
+          set -o pipefail
+          chmod +x scripts/*.sh
+          ./scripts/run-raft-patch-series-ci.sh \
+            --release-tag latest \
+            --seed 7 \
+            --nodes 5 \
+            --rounds 6 \
+            --log-dir "$GO_DETSCHED_LOG_DIR/patch-series" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/raft_patch_series_ci.log"
+
       - name: Finalize CI log bundle
         if: always()
         run: |

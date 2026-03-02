@@ -1,0 +1,5 @@
+step_id|scenario|patch_file|bug_issue|fixed_issue|description
+1|split_vote|0001-fix-split-vote-timeout.patch|RAFT_SPLIT_VOTE_LIVELOCK|RAFT_SPLIT_VOTE_FIXED|Replace fixed election timeout behavior with jittered election timeout.
+2|stale_leader|0002-reject-stale-leader-append.patch|RAFT_STALE_LEADER_ACCEPTED|RAFT_STALE_LEADER_FIXED|Always reject stale-term append entries.
+3|reorder_commit|0003-require-majority-commit.patch|RAFT_COMMIT_WITHOUT_MAJORITY|RAFT_COMMIT_WITH_MAJORITY_FIXED|Require majority acknowledgements before advancing commit index.
+4|log_truncation|0004-enforce-log-consistency.patch|RAFT_LOG_TRUNCATION_ACCEPTED|RAFT_LOG_TRUNCATION_FIXED|Reject inconsistent prev-log appends and disallow gap/partial overwrite behavior.

@@ -14,6 +14,7 @@ func main() {
 	seed := flag.Int64("seed", 7, "deterministic scenario seed")
 	nodes := flag.Int("nodes", 5, "number of raft nodes")
 	rounds := flag.Int("rounds", 3, "proposal rounds for append scenarios")
+	expectBug := flag.Bool("expect-bug", true, "expect vulnerable behavior (true) or fixed behavior (false)")
 	verbose := flag.Bool("verbose", false, "print detailed event log")
 	useSynctest := flag.Bool("synctest", true, "run scenarios inside testing/synctest bubble")
 	flag.Parse()
@@ -31,6 +32,7 @@ func main() {
 			Seed:     *seed,
 			Nodes:    *nodes,
 			Rounds:   *rounds,
+			ExpectBug: *expectBug,
 			Verbose:  *verbose,
 			Synctest: *useSynctest,
 		})

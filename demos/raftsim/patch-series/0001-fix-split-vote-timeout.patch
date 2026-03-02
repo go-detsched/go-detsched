@@ -1,0 +1,26 @@
+diff --git a/demos/raftsim/internal/raft/node.go b/demos/raftsim/internal/raft/node.go
+--- a/demos/raftsim/internal/raft/node.go
++++ b/demos/raftsim/internal/raft/node.go
+@@ -617,9 +617,6 @@ func (n *Node) currentTerm() int {
+ }
+ 
+ func (n *Node) electionTimeout() time.Duration {
+-	if n.bugs.FixedElectionTimeout {
+-		return n.electionBase
+-	}
+ 	if n.electionJitter <= 0 {
+ 		return n.electionBase
+ 	}
+diff --git a/demos/raftsim/internal/scenarios/scenarios.go b/demos/raftsim/internal/scenarios/scenarios.go
+--- a/demos/raftsim/internal/scenarios/scenarios.go
++++ b/demos/raftsim/internal/scenarios/scenarios.go
+@@ -120,9 +120,6 @@ func runSplitVote(cfg RunConfig) (Result, error) {
+ 	cluster, cancel, err := startClusterWithMessageFaults(nodeIDs, cfg.Seed, raft.BugConfig{
+ 		FixedElectionTimeout: true,
+ 	}, func(from, to string, msgType raft.MessageType, seq uint64) (bool, time.Duration) {
+-		if msgType == raft.MsgRequestVote {
+-			return true, 0
+-		}
+ 		return false, 0
+ 	})
+ 	if err != nil {

@@ -183,6 +183,26 @@ func (c *Cluster) NodeSnapshots() []NodeSnapshot {
 	return snaps
 }
 
+func (c *Cluster) NodeSnapshot(nodeID string) (NodeSnapshot, error) {
+	n, ok := c.nodes[nodeID]
+	if !ok {
+		return NodeSnapshot{}, fmt.Errorf("unknown node %q", nodeID)
+	}
+	return n.Snapshot(), nil
+}
+
+func (c *Cluster) InjectAppendEntries(ctx context.Context, fromID, toID string, req Message) (Message, error) {
+	src, ok := c.nodes[fromID]
+	if !ok {
+		return Message{}, fmt.Errorf("unknown source node %q", fromID)
+	}
+	targetAddr, ok := c.addresses[toID]
+	if !ok {
+		return Message{}, fmt.Errorf("unknown target node %q", toID)
+	}
+	return src.sendMessage(ctx, toID, targetAddr, req)
+}
+
 func (c *Cluster) EventLog() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()

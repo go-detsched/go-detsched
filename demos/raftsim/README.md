@@ -41,11 +41,19 @@ GODEBUG=detsched=1,detschedseed=7 "$GO_BIN" run ./cmd/raftsim --scenario stale_l
 - `split_vote`: fixed election timeout can livelock in a split vote.
 - `stale_leader`: follower incorrectly accepts stale leader append.
 - `reorder_commit`: commit index advances without majority replication.
+- `log_truncation`: follower accepts inconsistent previous-log append.
 
 Each scenario prints a deterministic event hash for easy reproduction:
 
 ```text
 scenario=stale_leader seed=7 status=PASS bug_observed=true issue=RAFT_STALE_LEADER_ACCEPTED hash=... reason="..." evidence="..."
+```
+
+The CLI supports both vulnerable and fixed expectation modes:
+
+```bash
+GODEBUG=detsched=1,detschedseed=7 "$GO_BIN" run ./cmd/raftsim --scenario stale_leader --expect-bug=true
+GODEBUG=detsched=1,detschedseed=7 "$GO_BIN" run ./cmd/raftsim --scenario stale_leader --expect-bug=false
 ```
 
 ## Why `synctest`
@@ -67,6 +75,35 @@ Do not compile the compiler from source for this demo. Use one of:
    environment.
 
 Then run the demo with that binary via `GO_BIN` (or equivalent explicit path).
+
+You can also fetch release assets directly with `gh`:
+
+```bash
+TAG="$(gh release list --limit 1 --json tagName --jq '.[0].tagName')"
+gh release download "$TAG" --pattern "go-detsched-go1.26.0-linux-amd64.tar.gz" --pattern "SHA256SUMS"
+sha256sum -c SHA256SUMS --ignore-missing
+tar -xzf go-detsched-go1.26.0-linux-amd64.tar.gz
+GO_BIN="$PWD/go-detsched-go1.26.0-linux-amd64/bin/go"
+```
+
+## Instructional Patch Series
+
+This repo now includes a numbered teaching patch sequence in:
+
+- `demos/raftsim/patch-series/stages.tsv`
+- `demos/raftsim/patch-series/0001-*.patch` through `0004-*.patch`
+
+Each stage preserves one explicit fix step:
+
+1. prove bug in vulnerable baseline,
+2. apply the matching stage patch,
+3. prove fixed behavior.
+
+Run the full staged proof locally:
+
+```bash
+./scripts/run-raft-patch-series-ci.sh --go "$GO_BIN" --seed 7 --nodes 5 --rounds 6 --log-dir ./ci-logs/patch-series
+```
 
 ## CI End-to-End Determinism Checks
 
@@ -91,3 +128,9 @@ Example local invocation against a patched binary:
 ```
 
 The log directory contains per-scenario run logs and summary diffs for debugging.
+
+For bug-then-fix instructional checks, CI also runs:
+
+```bash
+./scripts/run-raft-patch-series-ci.sh --release-tag latest --seed 7 --nodes 5 --rounds 6 --log-dir ./ci-logs/patch-series
+```

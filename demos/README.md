@@ -11,6 +11,16 @@ Set a patched Go binary path:
 GO_BIN="$HOME/.local/go-detsched-1.26.0/bin/go"
 ```
 
+Or download a released binary with `gh`:
+
+```bash
+TAG="$(gh release list --limit 1 --json tagName --jq '.[0].tagName')"
+gh release download "$TAG" --pattern "go-detsched-go1.26.0-linux-amd64.tar.gz" --pattern "SHA256SUMS"
+sha256sum -c SHA256SUMS --ignore-missing
+tar -xzf go-detsched-go1.26.0-linux-amd64.tar.gz
+GO_BIN="$PWD/go-detsched-go1.26.0-linux-amd64/bin/go"
+```
+
 Run reproducibility demo:
 
 ```bash
@@ -34,4 +44,10 @@ Run deterministic Raft CI-style checks (same-seed replay + issue assertions):
 
 ```bash
 ./scripts/run-raft-demo-ci.sh --go "$GO_BIN" --seed 7 --log-dir ./ci-logs
+```
+
+Run instructional Raft bug-then-fix patch-series checks:
+
+```bash
+./scripts/run-raft-patch-series-ci.sh --go "$GO_BIN" --seed 7 --nodes 5 --rounds 6 --log-dir ./ci-logs/patch-series
 ```

@@ -66,6 +66,7 @@ type BugConfig struct {
 	FixedElectionTimeout bool
 	AcceptStaleLeader    bool
 	CommitOnSingleAck    bool
+	UnsafeLogTruncation  bool
 }
 
 type MessageFaultHook func(from, to string, msgType MessageType, seq uint64) (drop bool, delay time.Duration)
@@ -474,12 +475,84 @@ func (n *Node) handleAppendEntries(req Message) Message {
 	n.leaderID = req.LeaderID
 	n.lastHeartbeat = time.Now()
 
-	for _, e := range req.Entries {
+	if req.PrevLogIndex > len(n.log) {
+		if !n.bugs.UnsafeLogTruncation {
+			return Message{
+				Type:         MsgAppendResult,
+				Term:         n.term,
+				Success:      false,
+				RejectReason: "prev log index missing",
+				MatchIndex:   len(n.log),
+			}
+		}
+		n.eventf(
+			"bug_accept_inconsistent_prev node=%s leader=%s prev_idx=%d local_len=%d",
+			n.id,
+			req.LeaderID,
+			req.PrevLogIndex,
+			len(n.log),
+		)
+	} else if req.PrevLogIndex > 0 && n.log[req.PrevLogIndex-1].Term != req.PrevLogTerm {
+		if !n.bugs.UnsafeLogTruncation {
+			return Message{
+				Type:         MsgAppendResult,
+				Term:         n.term,
+				Success:      false,
+				RejectReason: "prev log term mismatch",
+				MatchIndex:   len(n.log),
+			}
+		}
+		n.eventf(
+			"bug_accept_prev_term_mismatch node=%s leader=%s prev_idx=%d prev_term=%d local_prev_term=%d",
+			n.id,
+			req.LeaderID,
+			req.PrevLogIndex,
+			req.PrevLogTerm,
+			n.log[req.PrevLogIndex-1].Term,
+		)
+	}
+
+	for i, e := range req.Entries {
 		if e.Index <= 0 {
 			continue
 		}
+		if e.Index > len(n.log)+1 {
+			if !n.bugs.UnsafeLogTruncation {
+				return Message{
+					Type:         MsgAppendResult,
+					Term:         n.term,
+					Success:      false,
+					RejectReason: "log gap in append entries",
+					MatchIndex:   len(n.log),
+				}
+			}
+			n.eventf(
+				"bug_accept_log_gap node=%s leader=%s entry_idx=%d local_len=%d",
+				n.id,
+				req.LeaderID,
+				e.Index,
+				len(n.log),
+			)
+		}
+
 		if e.Index <= len(n.log) {
-			n.log[e.Index-1] = e
+			existing := n.log[e.Index-1]
+			if existing.Term != e.Term || existing.Data != e.Data {
+				if n.bugs.UnsafeLogTruncation {
+					n.log[e.Index-1] = e
+					n.eventf(
+						"bug_partial_overwrite node=%s leader=%s index=%d old_term=%d new_term=%d",
+						n.id,
+						req.LeaderID,
+						e.Index,
+						existing.Term,
+						e.Term,
+					)
+					continue
+				}
+				n.log = append(n.log[:e.Index-1], req.Entries[i:]...)
+				break
+			}
 			continue
 		}
 		n.log = append(n.log, e)

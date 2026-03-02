@@ -1,0 +1,23 @@
+diff --git a/demos/raftsim/internal/raft/node.go b/demos/raftsim/internal/raft/node.go
+--- a/demos/raftsim/internal/raft/node.go
++++ b/demos/raftsim/internal/raft/node.go
+@@ -455,18 +455,14 @@ func (n *Node) handleAppendEntries(req Message) Message {
+-	if req.Term < n.term && !n.bugs.AcceptStaleLeader {
++	if req.Term < n.term {
+ 		return Message{
+ 			Type:         MsgAppendResult,
+ 			Term:         n.term,
+ 			Success:      false,
+ 			RejectReason: "stale leader term",
+ 			MatchIndex:   len(n.log),
+ 		}
+ 	}
+-	if req.Term < n.term && n.bugs.AcceptStaleLeader {
+-		n.eventf("bug_accept_stale node=%s leader=%s leader_term=%d local_term=%d", n.id, req.LeaderID, req.Term, n.term)
+-	}
+-
+ 	if req.Term >= n.term {
+ 		n.term = req.Term
+ 		n.role = RoleFollower
+ 		n.votedFor = ""
+ 	}
