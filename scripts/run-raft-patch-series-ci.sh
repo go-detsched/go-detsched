@@ -173,6 +173,7 @@ echo "scenario_timeout_sec=${SCENARIO_TIMEOUT_SECS}"
 echo "build_timeout_sec=${BUILD_TIMEOUT_SECS}"
 
 summary_file="${LOG_DIR}/patch_series_summary.log"
+events_file="${LOG_DIR}/patch_series_events.log"
 executed_stages=0
 {
   echo "seed=${SEED}"
@@ -182,12 +183,28 @@ executed_stages=0
   echo "build_timeout_sec=${BUILD_TIMEOUT_SECS}"
   echo "stages_file=${STAGES_FILE}"
 } > "$summary_file"
+: > "$events_file"
 script_start_epoch="$(date +%s)"
+stage_total="$(awk -F'|' 'NR>1 && $1 ~ /^[0-9]+$/ {c++} END {print c+0}' "$STAGES_FILE")"
+
+log_event() {
+  local level event details ts
+  level="$1"
+  event="$2"
+  details="${3:-}"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ -n "$details" ]]; then
+    echo "${ts} level=${level} event=${event} ${details}" | tee -a "$events_file"
+  else
+    echo "${ts} level=${level} event=${event}" | tee -a "$events_file"
+  fi
+}
 
 CACHE_ROOT="${LOG_DIR}/raftsim-go-cache"
 mkdir -p "${CACHE_ROOT}/mod" "${CACHE_ROOT}/build"
 echo "gomodcache=${CACHE_ROOT}/mod" | tee -a "$summary_file"
 echo "gocache=${CACHE_ROOT}/build" | tee -a "$summary_file"
+log_event info "cache_configured" "gomodcache=${CACHE_ROOT}/mod gocache=${CACHE_ROOT}/build"
 
 warm_modules_start="$(date +%s)"
 set +e
@@ -202,6 +219,7 @@ mod_status=$?
 set -e
 warm_modules_elapsed="$(( $(date +%s) - warm_modules_start ))"
 echo "timing warm_modules_sec=${warm_modules_elapsed} status=${mod_status}" | tee -a "$summary_file"
+log_event info "warm_modules_complete" "elapsed_sec=${warm_modules_elapsed} status=${mod_status}"
 if [[ "$mod_status" -ne 0 ]]; then
   echo "error: failed to warm raftsim module dependencies" >&2
   rg -n "." "${LOG_DIR}/patch_series_mod_download.log" -m 120 >&2 || true
@@ -211,8 +229,12 @@ fi
 RAFTSIM_BIN="${WORK_REPO}/demos/raftsim/.bin/raftsim"
 
 build_raftsim_binary() {
-  local build_log
-  build_log="$1"
+  local stage phase build_log build_start build_elapsed
+  stage="$1"
+  phase="$2"
+  build_log="$3"
+  build_start="$(date +%s)"
+  log_event info "build_start" "stage=${stage} phase=${phase}"
   set +e
   (
     cd "${WORK_REPO}/demos/raftsim"
@@ -224,6 +246,8 @@ build_raftsim_binary() {
   ) > "$build_log" 2>&1
   local build_status=$?
   set -e
+  build_elapsed="$(( $(date +%s) - build_start ))"
+  log_event info "build_complete" "stage=${stage} phase=${phase} elapsed_sec=${build_elapsed} status=${build_status}"
   if [[ "$build_status" -eq 124 ]]; then
     echo "error: raftsim build timed out after ${BUILD_TIMEOUT_SECS}s" >&2
     rg -n "." "$build_log" -m 120 >&2 || true
@@ -240,8 +264,8 @@ run_stage() {
   local step scenario patch bug_issue fixed_issue description
   local bug_log fixed_log patch_path
   local bug_build_log fixed_build_log
-  local stage_start bug_start fixed_start stage_end
-  local bug_elapsed fixed_elapsed stage_elapsed
+  local stage_start bug_start fixed_start stage_end patch_start
+  local bug_elapsed fixed_elapsed stage_elapsed patch_elapsed
   step="$1"
   scenario="$2"
   patch="$3"
@@ -250,13 +274,14 @@ run_stage() {
   description="$6"
 
   echo "-- stage=${step} scenario=${scenario} patch=${patch} description=${description}"
+  log_event info "stage_iteration_start" "iteration=${step}/${stage_total} scenario=${scenario} patch=${patch}"
   bug_log="${LOG_DIR}/stage-${step}-${scenario}-bug.log"
   fixed_log="${LOG_DIR}/stage-${step}-${scenario}-fixed.log"
   bug_build_log="${LOG_DIR}/stage-${step}-${scenario}-bug-build.log"
   fixed_build_log="${LOG_DIR}/stage-${step}-${scenario}-fixed-build.log"
   patch_path="${WORK_REPO}/demos/raftsim/patch-series/${patch}"
 
-  build_raftsim_binary "$bug_build_log"
+  build_raftsim_binary "$step" "bug" "$bug_build_log"
   stage_start="$(date +%s)"
   set +e
   bug_start="$(date +%s)"
@@ -300,8 +325,11 @@ run_stage() {
     echo "error: stage patch file missing: $patch_path" >&2
     exit 1
   fi
+  patch_start="$(date +%s)"
   apply_stage_patch "$step" "$patch_path"
-  build_raftsim_binary "$fixed_build_log"
+  patch_elapsed="$(( $(date +%s) - patch_start ))"
+  log_event info "patch_apply_complete" "stage=${step} elapsed_sec=${patch_elapsed} patch=${patch}"
+  build_raftsim_binary "$step" "fixed" "$fixed_build_log"
 
   set +e
   fixed_start="$(date +%s)"
@@ -348,6 +376,7 @@ run_stage() {
   stage_end="$(date +%s)"
   stage_elapsed="$(( stage_end - stage_start ))"
   echo "timing stage=${step} scenario=${scenario} bug_sec=${bug_elapsed} fixed_sec=${fixed_elapsed} total_sec=${stage_elapsed}" | tee -a "$summary_file"
+  log_event info "stage_iteration_complete" "iteration=${step}/${stage_total} scenario=${scenario} bug_sec=${bug_elapsed} fixed_sec=${fixed_elapsed} total_sec=${stage_elapsed}"
 }
 
 replace_once() {
@@ -376,6 +405,7 @@ apply_stage_patch() {
   node_file="${WORK_REPO}/demos/raftsim/internal/raft/node.go"
   scenarios_file="${WORK_REPO}/demos/raftsim/internal/scenarios/scenarios.go"
   echo "applying stage patch logic for step=${step} from ${patch_path}"
+  log_event info "patch_apply_start" "stage=${step} patch=${patch_path##*/}"
   case "$step" in
     1)
       replace_once "$node_file" $'func (n *Node) electionTimeout() time.Duration {\n\tif n.bugs.FixedElectionTimeout {\n\t\treturn n.electionBase\n\t}\n\tif n.electionJitter <= 0 {\n\t\treturn n.electionBase\n\t}\n\treturn n.electionBase + time.Duration(n.rng.Int63n(int64(n.electionJitter)))\n}\n' $'func (n *Node) electionTimeout() time.Duration {\n\tif n.electionJitter <= 0 {\n\t\treturn n.electionBase\n\t}\n\treturn n.electionBase + time.Duration(n.rng.Int63n(int64(n.electionJitter)))\n}\n'
@@ -427,5 +457,7 @@ if [[ "${executed_stages}" -eq 0 ]]; then
 fi
 echo "executed_stages=${executed_stages}" >> "$summary_file"
 echo "total_elapsed_sec=$(( $(date +%s) - script_start_epoch ))" >> "$summary_file"
+log_event info "script_complete" "executed_stages=${executed_stages} total_elapsed_sec=$(( $(date +%s) - script_start_epoch ))"
+echo "events_file=${events_file}" >> "$summary_file"
 
 echo "Raft instructional patch-series checks passed."
