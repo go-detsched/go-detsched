@@ -1,0 +1,9 @@
+step_id|scenario|patch_file|bug_issue|fixed_issue|description
+1|split_vote|0001-fix-split-vote-timeout.patch|RAFT_SPLIT_VOTE_LIVELOCK|RAFT_SPLIT_VOTE_FIXED|Replace fixed election timeout behavior with jittered election timeout.
+2|stale_leader|0002-reject-stale-leader-append.patch|RAFT_STALE_LEADER_ACCEPTED|RAFT_STALE_LEADER_FIXED|Always reject stale-term append entries.
+3|reorder_commit|0003-require-majority-commit.patch|RAFT_COMMIT_WITHOUT_MAJORITY|RAFT_COMMIT_WITH_MAJORITY_FIXED|Require majority acknowledgements before advancing commit index.
+4|log_truncation|0004-enforce-log-consistency.patch|RAFT_LOG_TRUNCATION_ACCEPTED|RAFT_LOG_TRUNCATION_FIXED|Reject inconsistent prev-log appends and disallow gap/partial overwrite behavior.
+5|vote_no_log_check|0005-require-up-to-date-log-for-votes.patch|RAFT_VOTE_IGNORES_LOG_UPTODATE|RAFT_VOTE_REQUIRES_UPTODATE_LOG_FIXED|Require RequestVote to enforce candidate log up-to-date checks.
+6|vote_term_index_comparator|0006-fix-vote-term-index-comparator.patch|RAFT_VOTE_TERM_INDEX_COMPARATOR_BUG|RAFT_VOTE_TERM_COMPARATOR_FIXED|Correct vote comparator to prioritize last-log term before index.
+7|append_timer_reset|0007-reset-election-timer-on-append.patch|RAFT_APPEND_DOES_NOT_RESET_TIMER|RAFT_APPEND_RESETS_TIMER_FIXED|Reset follower election timer on valid AppendEntries.
+8|higher_term_step_down|0008-step-down-on-higher-term-responses.patch|RAFT_LEADER_IGNORES_HIGHER_TERM|RAFT_LEADER_STEPS_DOWN_ON_HIGHER_TERM_FIXED|Force leaders/candidates to step down when observing higher-term responses.

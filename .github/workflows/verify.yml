@@ -9,7 +9,7 @@ on:
 
 jobs:
   verify-go-1-26:
-    runs-on: blacksmith-16vcpu-ubuntu-2404
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     env:
       GO_DETSCHED_WORKDIR: ${{ github.workspace }}/.go-detsched-work
@@ -50,42 +50,57 @@ jobs:
           ./scripts/compile-patch.sh
           git diff --exit-code -- detsched.git.patch
           ./scripts/build.sh --go-tag go1.26.0 --no-install --no-verify --workdir "$GO_DETSCHED_WORKDIR" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/build.log"
-          chmod +x "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/"*.sh
 
-      - name: Run seed demo
+      - name: Run patch verification tests
         run: |
           set -o pipefail
-          "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_seed_demo.sh" 12345 99999 2>&1 | tee "$GO_DETSCHED_LOG_DIR/seed_demo.log"
+          ./scripts/run-tests.sh --go "$GO_DETSCHED_WORKDIR/go-src/bin/go" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/patch_tests.log"
 
-      - name: Run stress demo
+      - name: Run deterministic Raft demo checks
         run: |
           set -o pipefail
-          "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_stress_demo.sh" 12345 99999 256 3000 2>&1 | tee "$GO_DETSCHED_LOG_DIR/stress_demo.log"
+          chmod +x scripts/*.sh
+          ./scripts/run-raft-demo-ci.sh \
+            --go "$GO_DETSCHED_WORKDIR/go-src/bin/go" \
+            --seed-start 1 \
+            --seed-count 100 \
+            --nodes 5 \
+            --rounds 6 \
+            --timeout 420 \
+            --log-dir "$GO_DETSCHED_LOG_DIR" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/raft_demo_ci.log"
 
-      - name: Run synctest demo
+      - name: Run instructional Raft patch series checks
         run: |
           set -o pipefail
-          "$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_synctest_demo.sh" 12345 99999 2>&1 | tee "$GO_DETSCHED_LOG_DIR/synctest_demo.log"
-
-      - name: Run scheduler fuzzer race demo
-        run: |
-          set -o pipefail
-          DEMO="$GO_DETSCHED_WORKDIR/go-src/misc/detscheddemo/run_fuzz_race_demo.sh"
-          if [[ -x "$DEMO" ]]; then
-            "$DEMO" 1 50 500 3 24 1 full-scan 2>&1 | tee "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log"
-            catch_rate="$(sed -n 's/.*catch_rate_pct=\([0-9.]\+\).*/\1/p' "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log" | tail -n1)"
-            if [[ -z "$catch_rate" ]]; then
-              echo "FAIL: could not extract catch_rate_pct from fuzz race demo log" >&2
-              exit 1
-            fi
-            echo "Scheduler-fuzzer catch rate across 50 trials: ${catch_rate}%"
-            if ! awk -v r="$catch_rate" 'BEGIN { exit (r > 0 && r < 100) ? 0 : 1 }'; then
-              echo "FAIL: catch rate must be between 0 and 100 (exclusive) to keep demo subtle; got ${catch_rate}%" >&2
-              exit 1
-            fi
-          else
-            echo "Skipping fuzzer race demo: script not present in applied patch artifact."
-            echo "Skipping fuzzer race demo: script not present in applied patch artifact." > "$GO_DETSCHED_LOG_DIR/fuzz_race_demo.log"
+          chmod +x scripts/*.sh
+          echo "workspace_size=$(du -sh . | cut -f1)" | tee "$GO_DETSCHED_LOG_DIR/patch_series_preflight.log"
+          echo "toolchain_workdir_size=$(du -sh "$GO_DETSCHED_WORKDIR" | cut -f1)" | tee -a "$GO_DETSCHED_LOG_DIR/patch_series_preflight.log"
+          set +e
+          timeout 300s ./scripts/run-raft-patch-series-ci.sh \
+            --go "$GO_DETSCHED_WORKDIR/go-src/bin/go" \
+            --seed-start 1 \
+            --seed-count 100 \
+            --nodes 5 \
+            --rounds 6 \
+            --scenario-timeout 45 \
+            --build-timeout 120 \
+            --log-dir "$GO_DETSCHED_LOG_DIR/patch-series" 2>&1 | tee "$GO_DETSCHED_LOG_DIR/raft_patch_series_ci.log"
+          status=${PIPESTATUS[0]}
+          if [[ -f "$GO_DETSCHED_LOG_DIR/patch-series/patch_series_summary.log" ]]; then
+            echo "---- patch_series_summary.log ----"
+            cat "$GO_DETSCHED_LOG_DIR/patch-series/patch_series_summary.log"
+          fi
+          if [[ -f "$GO_DETSCHED_LOG_DIR/patch-series/patch_series_events.log" ]]; then
+            echo "---- patch_series_events.log (last 80 lines) ----"
+            tail -n 80 "$GO_DETSCHED_LOG_DIR/patch-series/patch_series_events.log"
+          fi
+          set -e
+          if [[ "$status" -eq 124 ]]; then
+            echo "instructional patch-series checks exited with timeout status (see patch-series logs for stage-level timeout details)" >&2
+            exit 124
+          fi
+          if [[ "$status" -ne 0 ]]; then
+            exit "$status"
           fi
 
       - name: Finalize CI log bundle
